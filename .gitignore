@@ -1,0 +1,4 @@
+.DS_Store
+Cargo.lock
+/target
+JWT_SECRET_KEY

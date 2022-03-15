@@ -1,0 +1,338 @@
+openapi: 3.0.1
+info:
+  title: c't Labyrinth
+  description: A labyrinth server
+  contact:
+    email: ola@ct.de
+  license:
+    name: GPLv3
+    url: https://www.gnu.org/licenses/gpl-3.0.html
+  version: 0.0.1
+servers:
+- url: http://api.labyrinth.ersatzworld.net/v1
+tags:
+- name: door
+  description: Operations about door
+- name: user
+  description: Operations about user
+paths:
+  /door/enter/{doorId}/with/{key}:
+    put:
+      tags:
+      - door
+      summary: Try to open a door with a key, if successful go through it to the next room.
+      operationId: updateDoor
+      parameters:
+      - name: doorId
+        in: path
+        description: the door ID
+        required: true
+        schema:
+          $ref: '#/components/schemas/Door'
+      - name: key
+        in: path
+        description: the key to open the door
+        required: true
+        schema:
+          $ref: '#/components/schemas/Key'
+      responses:
+        400:
+          description: Invalid ID supplied
+          content: {}
+        404:
+          description: Door or user not found
+          content: {}
+        405:
+          description: Validation exception
+          content: {}
+      security:
+      - labyrinth_auth:
+        - play
+      x-codegen-request-body-name: body
+  /door/info/{doorId}:
+    get:
+      tags:
+      - door
+      summary: Get door info
+      description: Is the door open?
+      operationId: getDoorInfo
+      parameters:
+      - name: doorId
+        in: path
+        description: the door ID
+        required: true
+        schema:
+          $ref: '#/components/schemas/Door'
+      responses:
+        200:
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Door'
+        400:
+          description: Invalid status value
+          content: {}
+      security:
+      - labyrinth_auth:
+        - play
+  /ping:
+    get:
+      summary: Check if server is running
+      operationId: ping
+      responses:
+        200:
+          description: success
+          content: {}
+  /user/register:
+    post:
+      tags:
+      - user
+      summary: Register user
+      description: Ask to register a new user
+      operationId: registerUser
+      requestBody:
+        description: User object to create
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+        required: true
+      responses:
+        200:
+          description: successful operation
+          content: {}
+        403:
+          description: unsufficient rights requested, e.g. admin instead of user
+          content: {}
+      x-codegen-request-body-name: body
+  /user/activate:
+    post:
+      tags:
+      - user
+      summary: Activate user
+      description: Ask to activate a registered user
+      operationId: activateUser
+      requestBody:
+        description: Created user object
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+        required: true
+      responses:
+        200:
+          description: successful operation
+          content: {}
+        403:
+          description: unsufficient rights requested, e.g. admin instead of user
+          content: {}
+      x-codegen-request-body-name: body
+  /user/auth:
+    get:
+      tags:
+      - user
+      summary: Checks if given credentials are valid
+      operationId: validateLogin
+      responses:
+        200:
+          description: successful operation
+          content: {}
+        400:
+          description: Invalid username/password supplied
+          content: {}
+  /user/login:
+    get:
+      tags:
+      - user
+      summary: Logs user into the system
+      operationId: loginUser
+      parameters:
+      - name: username
+        in: query
+        description: The user name for login
+        required: true
+        schema:
+          type: string
+      - name: password
+        in: query
+        description: The password for login in clear text
+        required: true
+        schema:
+          type: string
+      responses:
+        200:
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: string
+        400:
+          description: Invalid token supplied
+          content: {}
+  /user/logout:
+    get:
+      tags:
+      - user
+      summary: Logs out current logged in user session
+      operationId: logoutUser
+      responses:
+        default:
+          description: successful operation
+          content: {}
+  /user/{userId}:
+    get:
+      tags:
+      - user
+      summary: Get user by user name
+      operationId: getUserByName
+      parameters:
+      - name: userId
+        in: path
+        description: 'The name that needs to be fetched.'
+        required: true
+        schema:
+          $ref: '#/components/schemas/UserId'
+      responses:
+        200:
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        400:
+          description: Invalid username supplied
+          content: {}
+        404:
+          description: User not found
+          content: {}
+    put:
+      tags:
+      - user
+      summary: Update user
+      description: This can only be done by the logged in user.
+      operationId: updateUser
+      parameters:
+      - name: userId
+        in: path
+        description: name that need to be updated
+        required: true
+        schema:
+          $ref: '#/components/schemas/UserId'
+      requestBody:
+        description: Updated user object
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+        required: true
+      responses:
+        400:
+          description: Invalid user ID supplied
+          content: {}
+        404:
+          description: User not found
+          content: {}
+      x-codegen-request-body-name: body
+    delete:
+      tags:
+      - user
+      summary: Delete user
+      description: This can only be done by the logged in user.
+      operationId: deleteUser
+      parameters:
+      - name: userId
+        in: path
+        description: The user that needs to be deleted
+        required: true
+        schema:
+          $ref: '#/components/schemas/UserId'
+      responses:
+        400:
+          description: Invalid user ID supplied
+          content: {}
+        404:
+          description: User not found
+          content: {}
+components:
+  schemas:
+    Door:
+      type: object
+      properties:
+        doorId:
+          type: string
+          format: byte
+        isOpen:
+          type: boolean
+    Room:
+      type: object
+      properties:
+        roomId:
+          type: string
+          format: objectid
+        doors:
+          type: array
+          items:
+            type: object
+            allOf:
+            - properties:
+                direction:
+                  type: string
+                  enum:
+                  - N
+                  - E
+                  - S
+                  - W
+            - $ref: '#/components/schemas/Door'
+    Key:
+      type: object
+      description: a password like string that can open a door
+      properties:
+        key:
+          type: string
+    UserId:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: objectid
+    User:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+    UserWithID:
+      type: object
+      allOf:
+      - properties:
+          userName:
+            type: string
+          email:
+            type: string
+      - $ref: '#/components/schemas/UserId'
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        type:
+          type: string
+        message:
+          type: string
+  securitySchemes:
+    labyrinth_auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: http://labyrinth.ersatzworld.net/oauth/dialog
+          scopes:
+            play: play the game
+    api_key:
+      type: apiKey
+      name: api_key
+      in: header

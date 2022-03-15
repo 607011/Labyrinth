@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  smtp:
+    image: ixdotai/smtp:latest
+    ports:
+      - 127.0.0.1:25:25
+  mongo:
+    image: mongo:4.0.4
+    ports:
+      - 127.0.0.1:27017-27019:27017-27019
+    
