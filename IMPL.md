@@ -1,7 +1,9 @@
 # Notizen zur Implementierung
 
-Router: https://blog.logrocket.com/a-minimal-web-service-in-rust-using-hyper/
-JWT: https://crates.io/crates/jwt | https://jwt.io/
+
+
+- Ablage großer Dateien in der Cloud?
+  - Google Drive API? https://docs.rs/google-drive3/latest/google_drive3/
 
 - Struktur des Datenbankeintrags für einen Benutzer:
    ```json
@@ -13,7 +15,7 @@ JWT: https://crates.io/crates/jwt | https://jwt.io/
        "salt": "<short randomly generated string>",
        "hash": <ByteArray>
      },
-     "pin": u32,
+     "pin": Int64,
      "activated": bool,
    }
    ```
