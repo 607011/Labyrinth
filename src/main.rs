@@ -260,7 +260,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
                 return Ok(reply);
             }
         }
-        Err(e) => {
+        Err(_) => {
             let empty: Vec<u8> = Vec::new();
             let reply = warp::reply::json(&empty);
             let reply = warp::reply::with_status(reply, StatusCode::UNAUTHORIZED);
