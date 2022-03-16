@@ -1,3 +1,3 @@
 # Labyrinth
 
-Backend for an Escape Room like game.
+Backend (REST API) for an escape room like web-based game.
