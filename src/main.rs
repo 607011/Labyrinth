@@ -227,7 +227,7 @@ pub async fn user_authentication_handler(username: String) -> WebResult<impl Rep
     Ok(StatusCode::OK)
 }
 
-pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
+pub async fn user_login_handler(body: UserLoginRequest, db: DB) -> WebResult<impl Reply> {
     println!("user_login_handler called, username = {}", body.username);
     match db.get_user(&body.username).await {
         Ok(user) => {
