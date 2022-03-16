@@ -198,7 +198,10 @@ impl DB {
 
     pub async fn activate_user(&mut self, user: &User) -> Result<()> {
         let query = doc! { "username": user.username.clone(), "activated": false };
-        let modification = doc! { "$set": { "activated": true} };
+        let modification = doc! {
+            "$set": { "activated": true},
+            "$unset": { "pin": 0 }
+        };
         let result = self
             .get_users_coll()
             .update_one(query, modification, None)
