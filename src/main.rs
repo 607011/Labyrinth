@@ -237,6 +237,7 @@ pub async fn user_login_handler(body: UserLoginRequest, db: DB) -> WebResult<imp
                 user.password.clone().unwrap().salt.as_str()
             );
             let salt = SaltString::new(user.password.clone().unwrap().salt.as_str()).unwrap();
+            // TODO: deduplicate code (see user_registration_handler())
             let password_hash = Pbkdf2
                 .hash_password_customized(
                     body.password.as_bytes(),
