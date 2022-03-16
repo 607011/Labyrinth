@@ -19,11 +19,11 @@ jsonwebtoken = "7.2.0"
 warp = "0.3.2"
 chrono = "0.4"
 bson = { version = "2.1.0", features = ["chrono-0_4"] }
-uuid = "*"
+uuid = "0.8.2"
 futures = "0.3.21"
 pbkdf2 = "0.10.1"
 rand_core = { version = "0.6", features = ["std"] }
-lazy_static = "*"
+lazy_static = "1.4.0"
 lettre = "0.10.0-rc.1"
 
 [dependencies.mongodb]
