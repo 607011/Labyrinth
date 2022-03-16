@@ -36,8 +36,7 @@ impl JwtSecretKey {
 impl fmt::Display for JwtSecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.token.iter() {
-            // Decide if you want to pad the value or have spaces inbetween, etc.
-            write!(f, "{:X} ", byte)?;
+            write!(f, "{:X}", byte)?;
         }
         Ok(())
     }
