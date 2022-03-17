@@ -30,6 +30,7 @@
              direction: "one of N, E, S, W",
          }
      ],
+     "labyrinth_id": Int64,
    }
    ```
 
