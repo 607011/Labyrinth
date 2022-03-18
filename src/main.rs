@@ -231,6 +231,11 @@ pub async fn user_authentication_handler(username: String) -> WebResult<impl Rep
     Ok(StatusCode::OK)
 }
 
+pub async fn null_handler() -> WebResult<impl Reply> {
+    println!("null called",);
+    Ok(StatusCode::OK)
+}
+
 pub async fn user_login_handler(body: UserLoginRequest, db: DB) -> WebResult<impl Reply> {
     println!("user_login_handler called, username = {}", body.username);
     match db.get_user(&body.username).await {
@@ -395,45 +400,67 @@ async fn main() -> Result<()> {
     let db = DB::init().await?;
     let mut headers = HeaderMap::new();
     headers.insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
-    headers.insert("Access-Control-Allow-Headers", HeaderValue::from_static("x-csrf-token,authorization,content-type,accept,origin,x-requested-with,access-control-allow-origin"));
+    headers.insert(
+        "Access-Control-Allow-Headers",
+        HeaderValue::from_static("x-csrf-token,authorization,content-type,accept,origin,x-requested-with,access-control-allow-origin"));
     headers.insert("Allow-Credentials", HeaderValue::from_static("true"));
     headers.insert(
         "Allow-Methods",
         HeaderValue::from_static("GET,POST,PUT,PATCH,OPTIONS,DELETE"),
     );
-    let ping_route = warp::path!("ping").and(warp::get()).map(warp::reply);
+    let root = warp::path::end().map(|| "Labyrinth API root.");
+    let ping_route = warp::path!("ping")
+        .and(warp::get())
+        .map(warp::reply)
+        .with(warp::reply::with::headers(headers.clone()));
     let user_register_route = warp::path!("user" / "register")
         .and(warp::post())
         .and(warp::body::json())
         .and(with_db(db.clone()))
-        .and_then(user_registration_handler);
+        .and_then(user_registration_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+    let cors_user_register_route = warp::path!("user" / "register")
+        .and(warp::options().and_then(null_handler))
+        .with(warp::reply::with::headers(headers.clone()));
     let user_activation_route = warp::path!("user" / "activate")
         .and(warp::post())
         .and(warp::body::json())
         .and(with_db(db.clone()))
-        .and_then(user_activation_handler);
+        .and_then(user_activation_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+    let cors_user_activation_route = warp::path!("user" / "activate")
+        .and(warp::options().and_then(null_handler))
+        .with(warp::reply::with::headers(headers.clone()));
     let user_login_route = warp::path!("user" / "login")
         .and(warp::post())
         .and(warp::body::json())
         .and(with_db(db.clone()))
-        .and_then(user_login_handler);
+        .and_then(user_login_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+    let cors_user_login_route = warp::path!("user" / "login")
+        .and(warp::options().and_then(null_handler))
+        .with(warp::reply::with::headers(headers.clone()));
     let user_auth_route = warp::path!("user" / "auth")
         .and(warp::get())
         .and(with_auth(Role::User))
-        .and_then(user_authentication_handler);
-    let root = warp::path::end().map(|| "Labyrinth API root.");
-
-    // TODO: implement OPTIONS reply for individual paths, not for any
-    let cors_route = warp::any()
-        .map(warp::reply)
+        .and_then(user_authentication_handler)
         .with(warp::reply::with::headers(headers.clone()));
+    let cors_auth_route = warp::path!("user" / "auth")
+        .and(warp::options())
+        .and_then(null_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+
     let routes = root
-        .or(user_auth_route.with(warp::reply::with::headers(headers.clone())))
-        .or(user_login_route.with(warp::reply::with::headers(headers.clone())))
-        .or(user_register_route.with(warp::reply::with::headers(headers.clone())))
-        .or(user_activation_route.with(warp::reply::with::headers(headers.clone())))
-        .or(ping_route.with(warp::reply::with::headers(headers.clone())))
-        .or(cors_route);
+        .or(user_auth_route)
+        .or(cors_user_login_route)
+        .or(user_login_route)
+        .or(user_register_route)
+        .or(cors_user_register_route)
+        .or(user_activation_route)
+        .or(cors_user_activation_route)
+        .or(ping_route)
+        .or(cors_auth_route)
+        .recover(error::handle_rejection);
 
     let client_options = ClientOptions::parse("mongodb://localhost:27017")
         .await
