@@ -192,7 +192,22 @@ pub async fn user_registration_handler(
                     .unwrap())
                 .date_now()
                 .subject("Your Labyrinth Activation PIN")
-                .body(format!("Hi {}!\n\nYou've successfully registered with Labyrinth.\n\nYour PIN: {:06}\n\nPlease head back to the Labyrinth website and enter it to activate your account.\n\nCheers,\nYour Labyrinth Host\n\n\n*** If you don't what this mail is about, please ignore it ;-)", body.username, pin))
+                .body(format!(
+                    r#"Hi {}!
+
+You've successfully registered with Labyrinth.
+
+Your PIN: {:06}
+
+Now go back to the Labyrinth website and enter it to activate your account.
+
+Cheers,
+Your Labyrinth Host
+
+
+*** If you don't know what this mail is about, please ignore it ;-)"#,
+                    body.username, pin
+                ))
                 .unwrap();
             let mailer = SmtpTransport::unencrypted_localhost();
             match mailer.send(&email) {
