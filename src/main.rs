@@ -1,4 +1,5 @@
 use auth::{with_auth, Role};
+use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use db::{with_db, Password, PinType, User, DB};
 use lettre::{Message, SmtpTransport, Transport};
 use pbkdf2::{
@@ -45,6 +46,22 @@ pub struct UserActivationResponse {
     pub jwt: String,
 }
 
+#[derive(Serialize, Debug)]
+pub struct UserWhoamiResponse {
+    pub username: String,
+    pub email: String,
+    pub role: String,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub created: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub registered: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub last_login: Option<DateTime<Utc>>,
+}
+
 pub async fn user_authentication_handler(username: String) -> WebResult<impl Reply> {
     println!(
         "user_authentication_handler called, username = {}",
@@ -53,12 +70,37 @@ pub async fn user_authentication_handler(username: String) -> WebResult<impl Rep
     Ok(StatusCode::OK)
 }
 
+pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Reply> {
+    println!("user_whoami_handler called, username = {}", username);
+    match db.get_user(&username).await {
+        Ok(user) => {
+            println!("got user {} with email {}", user.username, user.email);
+            let reply = warp::reply::json(&json!(&UserWhoamiResponse {
+                username: user.username.clone(),
+                email: user.email.clone(),
+                role: user.role.clone(),
+                created: Option::from(user.created),
+                registered: Option::from(user.registered),
+                last_login: Option::from(user.last_login),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            return Ok(reply);
+        }
+        Err(_) => {
+            let empty: Vec<u8> = Vec::new();
+            let reply = warp::reply::json(&empty);
+            let reply = warp::reply::with_status(reply, StatusCode::UNAUTHORIZED);
+            return Ok(reply);
+        }
+    }
+}
+
 pub async fn null_handler() -> WebResult<impl Reply> {
     println!("null called",);
     Ok(StatusCode::OK)
 }
 
-pub async fn user_login_handler(body: UserLoginRequest, db: DB) -> WebResult<impl Reply> {
+pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
     println!("user_login_handler called, username = {}", body.username);
     match db.get_user(&body.username).await {
         Ok(user) => {
@@ -82,8 +124,9 @@ pub async fn user_login_handler(body: UserLoginRequest, db: DB) -> WebResult<imp
                 )
                 .unwrap()
                 .to_string();
-            if password_hash == user.password.unwrap().hash {
+            if password_hash == user.password.as_ref().unwrap().hash {
                 println!("Hashes match. User is verified.");
+                let _ = db.login_user(&user).await;
                 let token_str = auth::create_jwt(&user.username, &Role::from_str(&user.role));
                 let reply = warp::reply::json(&json!(&UserActivationResponse {
                     jwt: token_str.unwrap(),
@@ -179,6 +222,9 @@ pub async fn user_registration_handler(
                     password,
                     Option::from(pin),
                     false,
+                    Option::from(Utc::now()),
+                    Option::default(),
+                    Option::default(),
                 ))
                 .await;
             let email = Message::builder()
@@ -286,8 +332,20 @@ async fn main() -> Result<()> {
         .and(warp::options())
         .and_then(null_handler)
         .with(warp::reply::with::headers(headers.clone()));
+    let user_whoami_route = warp::path!("user" / "whoami")
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(user_whoami_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+    let cors_whoami_route = warp::path!("user" / "whoami")
+        .and(warp::options())
+        .and_then(null_handler)
+        .with(warp::reply::with::headers(headers.clone()));
 
     let routes = root
+        .or(user_whoami_route)
+        .or(cors_whoami_route)
         .or(user_auth_route)
         .or(cors_user_login_route)
         .or(user_login_route)
@@ -297,6 +355,7 @@ async fn main() -> Result<()> {
         .or(cors_user_activation_route)
         .or(ping_route)
         .or(cors_auth_route)
+        // TODO: Add CORS headers to rejection response
         .recover(error::handle_rejection);
 
     let host = "127.0.0.1:8181";
