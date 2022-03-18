@@ -20,8 +20,13 @@ impl JwtSecretKey {
     pub fn new() -> JwtSecretKey {
         JwtSecretKey { token: Vec::new() }
     }
-    // get JWT secret key from file
-    pub fn read_key(&mut self, path: &str) {
+    pub fn new_from_file(path: &str) -> JwtSecretKey {
+        let mut jwt = JwtSecretKey::new();
+        jwt.read_key(path);
+        jwt
+    }
+    fn read_key(&mut self, path: &str) {
+        println!("Reading JWT_SECRET_KEY ...");
         match std::fs::read(path) {
             Ok(bytes) => {
                 self.token = bytes;
@@ -43,12 +48,7 @@ impl fmt::Display for JwtSecretKey {
 }
 
 lazy_static! {
-    static ref JWT_KEY: JwtSecretKey = {
-        let mut jwt = JwtSecretKey::new();
-        println!("Reading JWT_SECRET_KEY ...");
-        jwt.read_key("JWT_SECRET_KEY");
-        jwt
-    };
+    static ref JWT_KEY: JwtSecretKey = JwtSecretKey::new_from_file("JWT_SECRET_KEY");
 }
 
 #[derive(Clone, PartialEq)]
