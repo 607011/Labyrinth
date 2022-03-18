@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::convert::From;
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use warp::http::header::{HeaderMap, HeaderValue};
 use warp::{http::StatusCode, Filter, Rejection, Reply};
 
@@ -450,7 +451,9 @@ async fn main() -> Result<()> {
         println!(" - {}", collection_name);
     }
 
-    println!("Listening on http://127.0.0.1:8181");
-    warp::serve(routes).run(([127, 0, 0, 1], 8181)).await;
+    let host = "127.0.0.1:8181";
+    let addr: SocketAddr = host.parse().expect("Cannot parse host address");
+    println!("Listening on http://{}", host);
+    warp::serve(routes).run(addr).await;
     Ok(())
 }
