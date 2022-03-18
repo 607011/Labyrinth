@@ -1,5 +1,6 @@
 use crate::{error::Error::*, Result};
 use bson::Bson;
+use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use mongodb::bson::doc;
 use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
@@ -44,6 +45,15 @@ pub struct User {
     pub password: Option<Password>,
     pub pin: Option<PinType>,
     pub activated: bool,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub created: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub registered: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub last_login: Option<DateTime<Utc>>,
 }
 
 impl User {
@@ -54,6 +64,9 @@ impl User {
         password: Option<Password>,
         pin: Option<PinType>,
         activated: bool,
+        created: Option<DateTime<Utc>>,
+        registered: Option<DateTime<Utc>>,
+        last_login: Option<DateTime<Utc>>,
     ) -> Self {
         User {
             username: username.to_string(),
@@ -62,6 +75,9 @@ impl User {
             password: password,
             pin: pin,
             activated: activated,
+            created: created,
+            registered: registered,
+            last_login: last_login,
         }
     }
 }
@@ -154,11 +170,37 @@ impl DB {
         Ok(())
     }
 
+    pub async fn login_user(&mut self, user: &User) -> Result<()> {
+        let query = doc! { "username": user.username.clone(), "activated": true };
+        let modification = doc! {
+            "$set": { "last_login": Option::from(Utc::now().timestamp()) },
+        };
+        let result = self
+            .get_users_coll()
+            .update_one(query, modification, None)
+            .await;
+        match result {
+            Ok(_) => {
+                println!("Updated {}.", user.username);
+            }
+            Err(e) => {
+                println!("Error: update failed ({:?})", e);
+            }
+        }
+        Ok(())
+    }
+
     pub async fn activate_user(&mut self, user: &User) -> Result<()> {
         let query = doc! { "username": user.username.clone(), "activated": false };
         let modification = doc! {
-            "$set": { "activated": true},
-            "$unset": { "pin": 0 }
+            "$set": {
+                "activated": true,
+                "registered": Utc::now().timestamp(),
+                "last_login": Utc::now().timestamp(),
+            },
+            "$unset": {
+                "pin": 0,
+            },
         };
         let result = self
             .get_users_coll()
