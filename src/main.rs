@@ -7,7 +7,7 @@ use mongodb::bson::doc;
 use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
 use pbkdf2::{
-    password_hash::{Ident, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{Ident, PasswordHasher, SaltString},
     Algorithm, Params, Pbkdf2,
 };
 use rand_core::{OsRng, RngCore};
