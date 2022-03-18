@@ -1,9 +1,6 @@
 # Notizen zur Implementierung
 
-
-
-- Ablage großer Dateien in der Cloud?
-  - Google Drive API? https://docs.rs/google-drive3/latest/google_drive3/
+- Struktur des Datenbankeintrags für ein Spiel:
 
 - Struktur des Datenbankeintrags für einen Benutzer:
    ```json
@@ -17,6 +14,9 @@
      },
      "pin": Int64,
      "activated": bool,
+     "last_login": Date,
+     "registration_started": Date,
+     "registered": Date,
    }
    ```
 
