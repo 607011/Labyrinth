@@ -1,6 +1,6 @@
 use auth::{with_auth, Role};
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Password, PinType, User, DB};
+use db::{with_db, Password, PinType, UploadedFile, User, DB};
 use lettre::{Message, SmtpTransport, Transport};
 use pbkdf2::{
     password_hash::{Ident, PasswordHasher, SaltString},
@@ -62,6 +62,41 @@ pub struct UserWhoamiResponse {
     pub last_login: Option<DateTime<Utc>>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct RiddleResponse {
+    pub level: u32,
+    pub uploaded: Option<Box<[UploadedFile]>>,
+    pub task: Option<String>,
+    pub credits: Option<String>,
+}
+
+pub async fn riddle_get_by_level_handler(
+    level: u32,
+    username: String,
+    db: DB,
+) -> WebResult<impl Reply> {
+    println!("riddle_get_by_level_handler called, level = {}", level);
+    match db.get_riddle_by_level(level).await {
+        Ok(riddle) => {
+            println!("got riddle {}", riddle.level);
+            let reply = warp::reply::json(&json!(&RiddleResponse {
+                level: riddle.level,
+                uploaded: Option::from(riddle.uploaded),
+                task: Option::from(riddle.task),
+                credits: Option::from(riddle.credits),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            return Ok(reply);
+        }
+        Err(_) => {
+            let empty: Vec<u8> = Vec::new();
+            let reply = warp::reply::json(&empty);
+            let reply = warp::reply::with_status(reply, StatusCode::UNAUTHORIZED);
+            return Ok(reply);
+        }
+    }
+}
+
 pub async fn user_authentication_handler(username: String) -> WebResult<impl Reply> {
     println!(
         "user_authentication_handler called, username = {}",
@@ -97,6 +132,11 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
 
 pub async fn null_handler() -> WebResult<impl Reply> {
     println!("null called",);
+    Ok(StatusCode::OK)
+}
+
+pub async fn u32_handler(_: u32) -> WebResult<impl Reply> {
+    println!("u32 called",);
     Ok(StatusCode::OK)
 }
 
@@ -342,8 +382,20 @@ async fn main() -> Result<()> {
         .and(warp::options())
         .and_then(null_handler)
         .with(warp::reply::with::headers(headers.clone()));
+    let riddle_get_by_level_route = warp::path!("riddle" / u32)
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(riddle_get_by_level_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+    let cors_riddle_get_by_level_route = warp::path!("riddle" / u32)
+        .and(warp::options())
+        .and_then(u32_handler)
+        .with(warp::reply::with::headers(headers.clone()));
 
     let routes = root
+        .or(riddle_get_by_level_route)
+        .or(cors_riddle_get_by_level_route)
         .or(user_whoami_route)
         .or(cors_whoami_route)
         .or(user_auth_route)

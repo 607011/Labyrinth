@@ -11,6 +11,7 @@ use warp::Filter;
 pub type PinType = u32;
 const DB_NAME: &str = "labyrinth";
 const USERS_COLL: &str = "users";
+const RIDDLES_COLL: &str = "riddles";
 // const ROOMS_COLL: &str = "rooms";
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -82,6 +83,26 @@ impl User {
     }
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+pub struct UploadedFile {
+    name: String,
+    id: String,
+    #[serde(rename(serialize = "mimeType", deserialize = "mimeType"))]
+    mime_type: String,
+    #[serde(rename(serialize = "originalFilename", deserialize = "originalFilename"))]
+    original_filename: String,
+    #[serde(rename(serialize = "webContentLink", deserialize = "webContentLink"))]
+    url: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct Riddle {
+    pub level: u32,
+    pub uploaded: Option<Box<[UploadedFile]>>,
+    pub task: Option<String>,
+    pub credits: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct DB {
     pub client: Client,
@@ -104,6 +125,27 @@ impl DB {
 
     fn get_users_coll(&self) -> Collection<User> {
         self.get_database().collection::<User>(USERS_COLL)
+    }
+
+    fn get_riddles_coll(&self) -> Collection<Riddle> {
+        self.get_database().collection::<Riddle>(RIDDLES_COLL)
+    }
+
+    pub async fn get_riddle_by_level(&self, level: u32) -> Result<Riddle> {
+        println!("get_riddle_by_level(\"{}\")", level);
+        let coll = self.get_riddles_coll();
+        let doc = doc! { "level": level };
+        let result = coll.find_one(doc, None).await.unwrap();
+        match result {
+            Some(riddle) => {
+                println!("Found {}", riddle.level);
+                Ok(riddle)
+            }
+            None => {
+                println!("riddle not found");
+                Err(RiddleNotFoundError)
+            }
+        }
     }
 
     pub async fn get_user(&self, username: &String) -> Result<User> {

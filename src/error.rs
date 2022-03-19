@@ -15,6 +15,8 @@ pub enum Error {
     InvalidIDError(String),
     #[error("user not found")]
     UserNotFoundError,
+    #[error("riddle not found")]
+    RiddleNotFoundError,
     #[error("wrong credentials")]
     WrongCredentialsError,
     #[error("jwt token not valid")]
