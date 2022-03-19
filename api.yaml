@@ -1,9 +1,9 @@
 openapi: 3.0.1
 info:
-  title: c't Labyrinth
+  title: Labyrinth
   description: A labyrinth server
   contact:
-    email: ola@ct.de
+    email: oliver@ersatzworld.net
   license:
     name: GPLv3
     url: https://www.gnu.org/licenses/gpl-3.0.html
@@ -11,6 +11,8 @@ info:
 servers:
 - url: http://api.labyrinth.ersatzworld.net/v1
 tags:
+- name: room
+  description: Operations about room
 - name: door
   description: Operations about door
 - name: user

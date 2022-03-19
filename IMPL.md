@@ -17,6 +17,11 @@
      "last_login": Date,
      "registration_started": Date,
      "registered": Date,
+     "in_room": <ObjectId>,
+     "opened_doors": [
+       <ObjectId>,
+       ...
+     ],
    }
    ```
 
