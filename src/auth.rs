@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
+ * All rights reserved.
+ */
 use crate::{error::Error, Result, WebResult};
 use chrono::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};

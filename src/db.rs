@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
+ * All rights reserved.
+ */
 use crate::{error::Error::*, Result};
 use bson::{oid::ObjectId, Bson};
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
@@ -6,13 +10,10 @@ use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::env;
 use warp::Filter;
 
 pub type PinType = u32;
-pub const DB_NAME: &str = "labyrinth";
-pub const USERS_COLL: &str = "users";
-pub const RIDDLES_COLL: &str = "riddles";
-pub const ROOMS_COLL: &str = "rooms";
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Password {
@@ -40,16 +41,13 @@ impl Into<Bson> for Password {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UploadedFile {
-    name: String,
-    id: String,
+    #[serde(rename = "fileId")]
+    pub file_id: ObjectId,
+    pub name: String,
     #[serde(rename = "mimeType")]
-    mime_type: String,
-    #[serde(rename = "originalFilename")]
-    original_filename: String,
-    #[serde(rename = "webContentLink")]
-    url: String,
-    width: Option<u32>,
-    height: Option<u32>,
+    pub mime_type: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -57,7 +55,7 @@ pub struct Riddle {
     #[serde(rename = "_id")]
     pub id: ObjectId,
     pub level: u32,
-    pub uploaded: Option<Box<[UploadedFile]>>,
+    pub files: Option<Box<[UploadedFile]>>,
     pub task: Option<String>,
     pub credits: Option<String>,
 }
@@ -139,47 +137,59 @@ impl User {
 #[derive(Clone, Debug)]
 pub struct DB {
     pub client: Client,
+    pub name: String,
+    pub coll_rooms: String,
+    pub coll_riddles: String,
+    pub coll_users: String,
 }
 
 impl DB {
     pub async fn init() -> Result<Self> {
-        let mut client_options = ClientOptions::parse("mongodb://127.0.0.1:27017")
-            .await
-            .unwrap();
-        client_options.app_name = Some(DB_NAME.to_string());
+        let url = env::var("DB_URL").expect("DB_URL is not in .env file");
+        let name = env::var("DB_NAME").expect("DB_NAME is not in .env file");
+        let coll_users = env::var("DB_COLL_USERS").expect("DB_COLL_USERS is not in .env file");
+        let coll_riddles =
+            env::var("DB_COLL_RIDDLES").expect("DB_COLL_RIDDLES is not in .env file");
+        let coll_rooms = env::var("DB_COLL_ROOMS").expect("DB_COLL_ROOMS is not in .env file");
+        let mut client_options = ClientOptions::parse(url).await.unwrap();
+        client_options.app_name = Some(name.to_string());
         Ok(Self {
             client: Client::with_options(client_options).unwrap(),
+            name: name.to_string(),
+            coll_users: coll_users.to_string(),
+            coll_riddles: coll_riddles.to_string(),
+            coll_rooms: coll_rooms.to_string(),
         })
     }
 
-    fn get_database(&self) -> Database {
-        self.client.database(DB_NAME)
+    pub fn get_database(&self) -> Database {
+        self.client.database(&self.name)
     }
 
     fn get_users_coll(&self) -> Collection<User> {
-        self.get_database().collection::<User>(USERS_COLL)
+        self.get_database().collection::<User>(&self.coll_users)
     }
 
     fn get_riddles_coll(&self) -> Collection<Riddle> {
-        self.get_database().collection::<Riddle>(RIDDLES_COLL)
+        self.get_database().collection::<Riddle>(&self.coll_riddles)
     }
 
     fn get_rooms_coll(&self) -> Collection<Room> {
-        self.get_database().collection::<Room>(ROOMS_COLL)
+        self.get_database().collection::<Room>(&self.coll_rooms)
     }
 
-    pub async fn get_riddle_by_level(&self, level: u32) -> Result<Riddle> {
+    pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
         println!("get_riddle_by_level(\"{}\")", level);
         let coll = self.get_riddles_coll();
         let result = coll.find_one(doc! { "level": level }, None).await.unwrap();
         match result {
             Some(riddle) => {
                 println!("Found {}", riddle.level);
-                Ok(riddle)
+                Ok(Some(riddle))
             }
             None => {
                 println!("riddle not found");
-                Err(RiddleNotFoundError)
+                Ok(Option::default())
             }
         }
     }

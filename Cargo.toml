@@ -25,6 +25,8 @@ pbkdf2 = "0.10.1"
 rand_core = { version = "0.6", features = ["std"] }
 lazy_static = "1.4.0"
 lettre = "0.10.0-rc.1"
+mongodb-gridfs = "0.2.2"
+base64 = "*"
 
 [dependencies.mongodb]
 version = "2.1.0"

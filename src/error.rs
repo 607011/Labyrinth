@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
+ * All rights reserved.
+ */
 use serde::Serialize;
 use std::convert::Infallible;
 use thiserror::Error;
