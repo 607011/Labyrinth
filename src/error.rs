@@ -17,6 +17,8 @@ pub enum Error {
     UserNotFoundError,
     #[error("riddle not found")]
     RiddleNotFoundError,
+    #[error("room not found")]
+    RoomNotFoundError,
     #[error("wrong credentials")]
     WrongCredentialsError,
     #[error("jwt token not valid")]

@@ -2,3 +2,6 @@
 Cargo.lock
 /target
 JWT_SECRET_KEY
+token.json
+credentials.json
+Pipfile.lock

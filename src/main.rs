@@ -1,6 +1,7 @@
 use auth::{with_auth, Role};
+use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Password, PinType, UploadedFile, User, DB};
+use db::{with_db, Direction, Password, PinType, Riddle, UploadedFile, User, DB};
 use lettre::{Message, SmtpTransport, Transport};
 use pbkdf2::{
     password_hash::{Ident, PasswordHasher, SaltString},
@@ -60,6 +61,9 @@ pub struct UserWhoamiResponse {
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
+    pub level: u32,
+    pub in_room: Option<ObjectId>,
+    pub solved: Box<[Riddle]>,
 }
 
 #[derive(Serialize, Debug)]
@@ -68,6 +72,51 @@ pub struct RiddleResponse {
     pub uploaded: Option<Box<[UploadedFile]>>,
     pub task: Option<String>,
     pub credits: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct RoomResponse {
+    pub id: ObjectId,
+    pub neighbors: Box<[Direction]>,
+    pub game_id: ObjectId,
+    pub entry: Option<bool>,
+    pub exit: Option<bool>,
+}
+
+pub async fn room_info_handler(id_str: String, username: String, db: DB) -> WebResult<impl Reply> {
+    println!("room_info_handler called, id = {}", id_str);
+    let oid = ObjectId::parse_str(id_str).unwrap();
+    match db.get_user(&username).await {
+        Ok(ref user) => {
+            let _in_room = user.in_room;
+        }
+        Err(_) => {
+            let empty: Vec<u8> = Vec::new();
+            let reply = warp::reply::json(&empty);
+            let reply = warp::reply::with_status(reply, StatusCode::UNAUTHORIZED);
+            return Ok(reply);
+        }
+    }
+    match db.get_room_info(&oid).await {
+        Ok(room) => {
+            println!("got room {}", room.id);
+            let reply = warp::reply::json(&json!(&RoomResponse {
+                id: room.id,
+                neighbors: room.neighbors,
+                game_id: room.game_id,
+                entry: room.entry,
+                exit: room.exit,
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            return Ok(reply);
+        }
+        Err(_) => {
+            let empty: Vec<u8> = Vec::new();
+            let reply = warp::reply::json(&empty);
+            let reply = warp::reply::with_status(reply, StatusCode::UNAUTHORIZED);
+            return Ok(reply);
+        }
+    }
 }
 
 pub async fn riddle_get_by_level_handler(
@@ -117,6 +166,9 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
                 created: Option::from(user.created),
                 registered: Option::from(user.registered),
                 last_login: Option::from(user.last_login),
+                level: user.level,
+                in_room: user.in_room,
+                solved: user.solved,
             }));
             let reply = warp::reply::with_status(reply, StatusCode::OK);
             return Ok(reply);
@@ -128,16 +180,6 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
             return Ok(reply);
         }
     }
-}
-
-pub async fn null_handler() -> WebResult<impl Reply> {
-    println!("null called",);
-    Ok(StatusCode::OK)
-}
-
-pub async fn u32_handler(_: u32) -> WebResult<impl Reply> {
-    println!("u32 called",);
-    Ok(StatusCode::OK)
 }
 
 pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
@@ -265,6 +307,9 @@ pub async fn user_registration_handler(
                     Option::from(Utc::now()),
                     Option::default(),
                     Option::default(),
+                    Box::new([]),
+                    0,
+                    Option::default(),
                 ))
                 .await;
             let email = Message::builder()
@@ -316,6 +361,21 @@ Your Labyrinth Host
             Ok(reply)
         }
     }
+}
+
+pub async fn null_handler() -> WebResult<impl Reply> {
+    println!("null_handler called",);
+    Ok(StatusCode::OK)
+}
+
+pub async fn u32_handler(_: u32) -> WebResult<impl Reply> {
+    println!("u32_handler called",);
+    Ok(StatusCode::OK)
+}
+
+pub async fn string_handler(_: String) -> WebResult<impl Reply> {
+    println!("string_handler called",);
+    Ok(StatusCode::OK)
 }
 
 #[tokio::main]
@@ -392,8 +452,20 @@ async fn main() -> Result<()> {
         .and(warp::options())
         .and_then(u32_handler)
         .with(warp::reply::with::headers(headers.clone()));
+    let room_info_route = warp::path!("room" / "info" / String)
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(room_info_handler)
+        .with(warp::reply::with::headers(headers.clone()));
+    let cors_room_info_route = warp::path!("room" / "info" / String)
+        .and(warp::options())
+        .and_then(string_handler)
+        .with(warp::reply::with::headers(headers.clone()));
 
     let routes = root
+        .or(room_info_route)
+        .or(cors_room_info_route)
         .or(riddle_get_by_level_route)
         .or(cors_riddle_get_by_level_route)
         .or(user_whoami_route)
