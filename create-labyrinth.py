@@ -6,6 +6,8 @@ import sys
 import os
 import json
 import re
+from itertools import zip_longest
+from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -16,93 +18,74 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 SPREADSHEET_ID = '1NS8yGoFvIOdjbdJIxCXG0rSPESTSyyjoVufbtWJBZTg'
 SPREADSHEET_RANGE = 'Game1!A1:O15'
 RE_UINT = re.compile(r'\d+')
-ENTRY = "Entry"
-EXIT = "Exit"
-X = "X"
+ENTRY = 'Entry'
+EXIT = 'Exit'
+X = 'X'
 
 db = None
 
-def generate(maze):
-    game_id = db.games.insert_one({ "number": 0x1ee7cafe}, None).inserted_id
-    grid = maze["grid"]
-    width = maze["width"]
-    height = maze["height"]
+
+def generate(maze, game_id):
+    grid = maze['grid']
+    width = maze['width']
+    height = maze['height']
     rooms = []
-    cursor = db.riddles.find()
+    riddles_cursor = db.riddles.find().sort('level', 1)
     riddles = {}
-    for riddle in cursor:
-        riddles[riddle["level"]] = riddle["_id"]
+    for riddle in riddles_cursor:
+        riddles[riddle['level']] = riddle['_id']
     pprint(riddles)
+
+    def cond_append(neighbors, level, direction):
+        if type(level) == int:
+            riddle_id = riddles.get(level)
+            assert(riddle_id is not None)
+            neighbors.append({
+                'direction': direction,
+                'riddle_id': riddles[level],
+                'level': level,
+            })
+
+    room_number = 1
     for y in range(height):
         for x in range(width):
             c = grid[x][y]
+            print(x,y,c)
             if c in [X, ENTRY, EXIT]:
                 neighbors = []
-                level = None
                 # to north
                 if y > 0:
-                    level = grid[x][y - 1]
-                    if RE_UINT.match(level):
-                        level = int(level)
-                        neighbors.append({
-                            "direction": "n",
-                            "riddle_id": riddles[level],
-                        })
+                    cond_append(neighbors, grid[x][y - 1], 'n')
                 # to east
                 if x < width - 1:
-                    level = grid[x + 1][y]
-                    if RE_UINT.match(level):
-                        level = int(level)
-                        neighbors.append({
-                            "direction": "e",
-                            "riddle_id": riddles[level],
-                            "level": level,
-                        })
+                    cond_append(neighbors, grid[x + 1][y], 'e')
                 # to south
                 if y < height - 1:
-                    level = grid[x][y + 1]
-                    if RE_UINT.match(level):
-                        level = int(level)
-                        neighbors.append({
-                            "direction": "s",
-                            "riddle_id": riddles[level],
-                            "level": level,
-                        })
+                    cond_append(neighbors, grid[x][y + 1], 's')
                 # to west
                 if x > 0:
-                    level = grid[x - 1][y]
-                    if RE_UINT.match(level):
-                        level = int(level)
-                        neighbors.append({
-                            "direction": "w",
-                            "riddle_id": riddles[level],
-                            "level": level,
-                        })
+                    cond_append(neighbors, grid[x - 1][y], 'w')
+                if len(neighbors) > 0:
+                    pprint(neighbors)
                 room = {
-                    "neighbors": neighbors,
-                    "game_id": game_id,
+                    'neighbors': neighbors,
+                    'game_id': game_id,
+                    'number': room_number,
                 }
                 if c == ENTRY:
-                    room.update({ "entry": True })
+                    room.update({ 'entry': True })
                 if c == EXIT:
-                    room.update({ "exit": True })
+                    room.update({ 'exit': True })
                 rooms.append(room)
+                room_number += 1
     pprint(rooms)
     result = db.rooms.insert_many(rooms)
-
-
-def find_entry(maze):
-    for x in range(maze["width"]):
-        for y in range(maze["height"]):
-            if maze["grid"][x][y] == maze["entry"]:
-                return (x, y)
-    return None
 
 
 def main():
     global db
     creds = None
-
+    load_dotenv()
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
@@ -116,7 +99,7 @@ def main():
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
 
-    print("Loading spreadsheet ...")
+    print('Loading spreadsheet ...')
     maze = None
     try:
         service = build('sheets', 'v4', credentials=creds)
@@ -124,27 +107,39 @@ def main():
         result = sheet.values().get(spreadsheetId=SPREADSHEET_ID,
                                     range=SPREADSHEET_RANGE).execute()
         values = result.get('values', [])
-        values = [*zip(*values)]
+        major_dim = result.get('majorDimension', 'ROWS')
+        assert(major_dim == 'ROWS')
+        longest_row_len = max([len(row) for row in values])
+        print(f'longest_row_len = {longest_row_len}')
+        grid = []
+        for row in values:
+            row = list(map(lambda v: int(v) if v.isnumeric() else None if v == '' else v, row))
+            if len(row) < longest_row_len:
+                row.extend([None]*(longest_row_len - len(row)))
+            grid.append(row)
+        grid = list(zip_longest(*grid))
         maze = {
-            "width": len(values),
-            "height": len(values[0]),
-            "grid": values,
+            'width': len(grid),
+            'height': len(grid[0]),
+            'grid': grid,
         }
     except HttpError as err:
         print(err)
 
 
-    print("Connecting to MongoDB ...")
-    client = MongoClient(
-        "mongodb://127.0.0.1:27017/?readPreference=primary&serverSelectionTimeoutMS=2000&appname=mongosh%201.2.3&directConnection=true&ssl=false"
-    )
+    print('Connecting to MongoDB ...')
+    client = MongoClient(f'{os.environ["DB_URL"]}/?readPreference=primary&directConnection=true&ssl=false')
     db = client.labyrinth
     db.games.drop()
     db.rooms.drop()
-    db.directions.drop()
-    # transpose maze
-    generate(maze)
+    game_id = db.games.insert_one({
+        'name': 'My very first labyrinth ;-)',
+        'number': 0,
+        'maze': maze,
+    }).inserted_id
+    print(f'Created game with ID {game_id}')
+    generate(maze, game_id)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
