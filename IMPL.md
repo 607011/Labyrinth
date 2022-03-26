@@ -1,6 +1,6 @@
 # Notizen zur Implementierung
 
-- Rate-Limiter für API-Requests implementieren, damit niemand Passwörter durch Ausprobieren herausfinden kann.
+- Rate-Limiter konfigurieren, damit niemand Passwörter durch Ausprobieren herausfinden kann: https://www.nginx.com/blog/rate-limiting-nginx/
 
 
 - Struktur des Datenbankeintrags für ein Spiel:

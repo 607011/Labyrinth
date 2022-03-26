@@ -55,9 +55,10 @@ lazy_static! {
     static ref JWT_KEY: JwtSecretKey = JwtSecretKey::new_from_file("JWT_SECRET_KEY");
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum Role {
     User,
+    Designer,
     Admin,
 }
 
@@ -65,6 +66,7 @@ impl Role {
     pub fn from_str(role: &str) -> Role {
         match role {
             "Admin" => Role::Admin,
+            "Designer" => Role::Designer,
             _ => Role::User,
         }
     }
@@ -75,6 +77,7 @@ impl fmt::Display for Role {
         match self {
             Role::User => write!(f, "User"),
             Role::Admin => write!(f, "Admin"),
+            Role::Designer => write!(f, "Designer"),
         }
     }
 }

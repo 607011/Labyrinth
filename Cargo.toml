@@ -30,6 +30,7 @@ dotenv = ">= 0.15.0"
 md5 = ">= 0.7.0"
 rust-argon2 = ">= 1.0"
 rand = ">= 0.8.5"
+url-escape = "*"
 
 [dependencies.mongodb]
 version = ">= 2.1.0"

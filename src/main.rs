@@ -2,50 +2,88 @@
  * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
  * All rights reserved.
  */
+use argon2::{self, Config, ThreadMode, Variant, Version};
 use auth::{with_auth, Role};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Direction, Password, PinType, Riddle, User, DB};
+use db::{with_db, Direction, PinType, User, DB};
+use dotenv::dotenv;
 use futures::stream::StreamExt;
+use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
+use mongodb::bson::doc;
 use mongodb_gridfs::{options::GridFSBucketOptions, GridFSBucket};
-use pbkdf2::{
-    password_hash::{Ident, PasswordHasher, SaltString},
-    Algorithm, Params, Pbkdf2,
-};
+use rand;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::convert::From;
 use std::env;
+use std::io::Read;
 use std::net::SocketAddr;
+use url_escape;
 use warp::{http::StatusCode, Filter, Rejection, Reply};
 
 mod auth;
+mod b64;
 mod db;
 mod error;
-mod b64 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        let encoded = base64::encode(v);
-        String::serialize(&encoded, s)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-        let decoded = String::deserialize(d)?;
-        base64::decode(decoded.as_bytes()).map_err(|e| serde::de::Error::custom(e))
-    }
-}
 
 type Result<T> = std::result::Result<T, error::Error>;
 type WebResult<T> = std::result::Result<T, Rejection>;
+
+lazy_static! {
+    static ref BAD_HASHES: Vec<Vec<u8>> = {
+        let file = &std::fs::File::open("toppass8-md5.bin").unwrap();
+        let chunk_size: usize = 128 / 8;
+        let mut hashes: Vec<Vec<u8>> = Vec::new();
+        loop {
+            let mut chunk = Vec::with_capacity(chunk_size);
+            let n = file
+                .take(chunk_size as u64)
+                .read_to_end(&mut chunk)
+                .unwrap();
+            if n == 0 {
+                break;
+            }
+            hashes.push(chunk);
+            if n < chunk_size {
+                break;
+            }
+        }
+        hashes
+    };
+    static ref OPPOSITE: HashMap<String, String> = HashMap::from([
+        (String::from("n"), String::from("s")),
+        (String::from("e"), String::from("w")),
+        (String::from("s"), String::from("n")),
+        (String::from("w"), String::from("e")),
+        //(String::from("u"), String::from("d")),
+        //(String::from("d"), String::from("u")),
+    ]);
+}
+
+fn bad_password(password: &String) -> bool {
+    let hash = md5::compute(password.as_bytes());
+    match BAD_HASHES.binary_search(&Vec::from(*hash)) {
+        Ok(_hash) => true,
+        _ => false,
+    }
+}
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UserRegistrationRequest {
     pub username: String,
     pub email: String,
-    pub role: String,
+    pub role: Role,
     pub password: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct StatusResponse {
+    pub ok: bool,
+    pub message: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -60,16 +98,22 @@ pub struct UserLoginRequest {
     pub password: String,
 }
 
-#[derive(Serialize, Debug)]
-pub struct UserActivationResponse {
-    pub jwt: String,
+#[derive(Deserialize, Serialize, Debug)]
+pub struct RoomResponse {
+    pub id: ObjectId,
+    pub number: u32,
+    pub neighbors: Vec<Direction>,
+    pub game_id: ObjectId,
+    pub entry: Option<bool>,
+    pub exit: Option<bool>,
 }
 
 #[derive(Serialize, Debug)]
 pub struct UserWhoamiResponse {
     pub username: String,
     pub email: String,
-    pub role: String,
+    pub role: Role,
+    pub activated: bool,
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
     pub created: Option<DateTime<Utc>>,
@@ -80,8 +124,18 @@ pub struct UserWhoamiResponse {
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
     pub level: u32,
-    pub in_room: Option<ObjectId>,
-    pub solved: Box<[Riddle]>,
+    pub in_room: Option<RoomResponse>,
+    pub solved: Vec<ObjectId>,
+    pub jwt: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct FileVariantResponse {
+    pub name: String,
+    #[serde(with = "b64")]
+    pub data: Vec<u8>,
+    #[serde(rename = "mimeType")]
+    pub scale: Option<u32>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -94,6 +148,8 @@ pub struct FileResponse {
     pub mime_type: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub scale: Option<u32>,
+    pub variants: Option<Vec<FileVariantResponse>>,
 }
 
 #[derive(Serialize, Debug)]
@@ -105,56 +161,344 @@ pub struct RiddleResponse {
     pub credits: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-pub struct RoomResponse {
-    pub id: ObjectId,
-    pub neighbors: Box<[Direction]>,
-    pub game_id: ObjectId,
-    pub entry: Option<bool>,
-    pub exit: Option<bool>,
+#[derive(Serialize, Debug)]
+pub struct RiddleSolvedResponse {
+    pub riddle_id: ObjectId,
+    pub solved: bool,
+    pub level: u32,
+    pub message: Option<String>,
 }
 
-fn empty_reply() -> warp::reply::Json {
-    let empty: Vec<u8> = Vec::new();
-    warp::reply::json(&empty)
+#[derive(Serialize, Debug)]
+pub struct SteppedThroughResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub room: RoomResponse,
 }
 
-pub async fn room_info_handler(id_str: String, username: String, db: DB) -> WebResult<impl Reply> {
-    println!("room_info_handler called, id = {}", id_str);
-    let oid = ObjectId::parse_str(id_str).unwrap();
+pub async fn go_handler(direction: String, username: String, db: DB) -> WebResult<impl Reply> {
+    println!(
+        "go_handler called, direction = {}, username = {}",
+        direction, username
+    );
     match db.get_user(&username).await {
-        Ok(ref user) => {
-            let _in_room = user.in_room;
-        }
+        Ok(ref mut user) => match db.get_room(&user.in_room.unwrap()).await {
+            Ok(room) => {
+                println!("current room: {}", room.id);
+                match room
+                    .neighbors
+                    .iter()
+                    .find(|&neighbor| neighbor.direction == direction)
+                {
+                    Some(neighbor) => {
+                        println!("riddle in direction {}: {}", direction, neighbor.riddle_id);
+                        match user.solved.iter().find(|&&s| s == neighbor.riddle_id) {
+                            Some(riddle_id) => {
+                                let opposite = &OPPOSITE[&neighbor.direction];
+                                match db
+                                    .get_rooms_coll()
+                                    .find_one(
+                                        doc! {
+                                            "neighbors": {
+                                                "$elemMatch": {
+                                                    "direction": opposite,
+                                                    "riddle_id": riddle_id,
+                                                }
+                                            }
+                                        },
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(room_behind) => {
+                                        println!(
+                                            "Room in opposite direction {}: {}",
+                                            opposite,
+                                            room_behind.as_ref().unwrap().id
+                                        );
+                                        user.in_room = Some(room_behind.unwrap().id);
+                                        match db
+                                            .get_users_coll()
+                                            .update_one(
+                                                doc! { "_id": user.id, "activated": true },
+                                                doc! {
+                                                    "$set": { "in_room": user.in_room },
+                                                },
+                                                None,
+                                            )
+                                            .await
+                                        {
+                                            Ok(_) => {
+                                                match db.get_room(&user.in_room.unwrap()).await {
+                                                    Ok(room) => {
+                                                        let reply = warp::reply::json(&json!(
+                                                            &SteppedThroughResponse {
+                                                                ok: true,
+                                                                message: Option::default(),
+                                                                room: RoomResponse {
+                                                                    id: room.id,
+                                                                    number: room.number,
+                                                                    entry: room.entry,
+                                                                    exit: room.exit,
+                                                                    game_id: room.game_id,
+                                                                    neighbors: room.neighbors,
+                                                                },
+                                                            }
+                                                        ));
+                                                        let reply = warp::reply::with_status(
+                                                            reply,
+                                                            StatusCode::OK,
+                                                        );
+                                                        Ok(reply)
+                                                    }
+                                                    Err(e) => {
+                                                        let reply = warp::reply::json(&json!(
+                                                            &StatusResponse {
+                                                                ok: false,
+                                                                message: Option::from(format!(
+                                                            "Error: room behind not found ({:?}",
+                                                            e
+                                                        )),
+                                                            }
+                                                        ));
+                                                        let reply = warp::reply::with_status(
+                                                            reply,
+                                                            StatusCode::OK,
+                                                        );
+                                                        Ok(reply)
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                let reply =
+                                                    warp::reply::json(&json!(&StatusResponse {
+                                                        ok: false,
+                                                        message: Option::from(format!(
+                                                            "Error: update failed ({:?}",
+                                                            e
+                                                        )),
+                                                    }));
+                                                let reply =
+                                                    warp::reply::with_status(reply, StatusCode::OK);
+                                                Ok(reply)
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let reply = warp::reply::json(&json!(&StatusResponse {
+                                            ok: false,
+                                            message: Option::from(format!(
+                                                "Error: no room behind found ({:?})",
+                                                e
+                                            )),
+                                        }));
+                                        let reply = warp::reply::with_status(reply, StatusCode::OK);
+                                        Ok(reply)
+                                    }
+                                }
+                            }
+                            None => {
+                                let reply = warp::reply::json(&json!(&StatusResponse {
+                                    ok: false,
+                                    message: Option::from("riddle not solved".to_string()),
+                                }));
+                                let reply = warp::reply::with_status(reply, StatusCode::OK);
+                                Ok(reply)
+                            }
+                        }
+                    }
+                    None => {
+                        let reply = warp::reply::json(&json!(&StatusResponse {
+                            ok: false,
+                            message: Option::from("neighbor not found".to_string()),
+                        }));
+                        let reply = warp::reply::with_status(reply, StatusCode::OK);
+                        Ok(reply)
+                    }
+                }
+            }
+            Err(_) => {
+                let reply = warp::reply::json(&json!(&StatusResponse {
+                    ok: false,
+                    message: Option::from("room not found".to_string()),
+                }));
+                let reply = warp::reply::with_status(reply, StatusCode::OK);
+                Ok(reply)
+            }
+        },
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                empty_reply(),
-                StatusCode::UNAUTHORIZED,
-            ));
-        }
-    }
-    match db.get_room_info(&oid).await {
-        Ok(room) => {
-            println!("got room {}", room.id);
-            let reply = warp::reply::json(&json!(&RoomResponse {
-                id: room.id,
-                neighbors: room.neighbors,
-                game_id: room.game_id,
-                entry: room.entry,
-                exit: room.exit,
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from("user not found".to_string()),
             }));
-            Ok(warp::reply::with_status(reply, StatusCode::OK))
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            Ok(reply)
         }
-        Err(_) => Ok(warp::reply::with_status(
-            empty_reply(),
-            StatusCode::UNAUTHORIZED,
-        )),
     }
 }
 
+pub async fn riddle_solve_handler(
+    riddle_id_str: String,
+    solution: String,
+    username: String,
+    db: DB,
+) -> WebResult<impl Reply> {
+    let solution = url_escape::decode(&solution);
+    println!(
+        "riddle_solve_handler called, oid = {}, solution = {}",
+        riddle_id_str, solution
+    );
+    let oid = ObjectId::parse_str(&riddle_id_str).unwrap();
+    let (riddle_id, user, reply) = db.is_riddle_accessible(&oid, &username).await;
+    match riddle_id {
+        Some(riddle_id) => match db.get_riddle_by_oid(riddle_id).await {
+            Ok(riddle) => match riddle {
+                Some(riddle) => {
+                    println!("got riddle {}", riddle.level);
+                    let solved = riddle.solution == solution;
+                    let user = user.unwrap();
+                    if solved {
+                        let mut solutions = user.solved;
+                        solutions.push(riddle.id);
+                        let result = db
+                            .get_users_coll()
+                            .update_one(
+                                doc! { "_id": user.id, "activated": true },
+                                doc! {
+                                    "$set": { "solved": solutions, "level": riddle.level.max(user.level) },
+                                },
+                                None,
+                            )
+                            .await;
+                        match result {
+                            Ok(_) => {
+                                println!("User updated.");
+                            }
+                            Err(e) => {
+                                println!("Error: update failed ({:?})", e);
+                            }
+                        }
+                    }
+                    let reply = warp::reply::json(&json!(&RiddleSolvedResponse {
+                        riddle_id: riddle.id,
+                        solved: solved,
+                        level: riddle.level,
+                        message: Option::default(),
+                    }));
+                    let reply = warp::reply::with_status(reply, StatusCode::OK);
+                    Ok(reply)
+                }
+                None => {
+                    let reply = warp::reply::json(&json!(&StatusResponse {
+                        ok: false,
+                        message: Option::from("riddle not found".to_string()),
+                    }));
+                    let reply = warp::reply::with_status(reply, StatusCode::OK);
+                    Ok(reply)
+                }
+            },
+            Err(_) => {
+                let reply = warp::reply::json(&json!(&StatusResponse {
+                    ok: false,
+                    message: Option::from("either username or password is wrong".to_string()),
+                }));
+                let reply = warp::reply::with_status(reply, StatusCode::OK);
+                Ok(reply)
+            }
+        },
+        None => {
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: reply,
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            Ok(reply)
+        }
+    }
+}
+
+pub async fn riddle_get_oid_handler(
+    riddle_id_str: String,
+    username: String,
+    db: DB,
+) -> WebResult<impl Reply> {
+    println!("riddle_get_oid_handler called, oid = {}", riddle_id_str);
+    let oid = ObjectId::parse_str(riddle_id_str).unwrap();
+    let (riddle_id, _user, reply) = db.is_riddle_accessible(&oid, &username).await;
+    match riddle_id {
+        Some(riddle_id) => match db.get_riddle_by_oid(riddle_id).await {
+            Ok(riddle) => match riddle {
+                Some(riddle) => {
+                    println!("got riddle {}", riddle.level);
+                    let mut found_files: Vec<FileResponse> = Vec::new();
+                    if let Some(files) = riddle.files {
+                        for file in files.iter() {
+                            println!("trying to load file {:?}", file);
+                            let bucket = GridFSBucket::new(
+                                db.get_database(),
+                                Some(GridFSBucketOptions::default()),
+                            );
+                            let mut cursor =
+                                bucket.open_download_stream(file.file_id).await.unwrap();
+                            let mut data: Vec<u8> = Vec::new();
+                            while let Some(mut chunk) = cursor.next().await {
+                                data.append(&mut chunk);
+                            }
+                            found_files.push(FileResponse {
+                                id: file.file_id,
+                                name: file.name.clone(),
+                                data: data,
+                                mime_type: file.mime_type.clone(),
+                                scale: file.scale,
+                                width: file.width,
+                                height: file.height,
+                                variants: Option::default(),
+                            })
+                        }
+                    }
+                    let reply = warp::reply::json(&json!(&RiddleResponse {
+                        id: riddle.id,
+                        level: riddle.level,
+                        files: Option::from(found_files),
+                        task: Option::from(riddle.task),
+                        credits: Option::from(riddle.credits),
+                    }));
+                    let reply = warp::reply::with_status(reply, StatusCode::OK);
+                    Ok(reply)
+                }
+                None => {
+                    let reply = warp::reply::json(&json!(&StatusResponse {
+                        ok: false,
+                        message: Option::from("riddle not found".to_string()),
+                    }));
+                    let reply = warp::reply::with_status(reply, StatusCode::OK);
+                    Ok(reply)
+                }
+            },
+            Err(_) => {
+                let reply = warp::reply::json(&json!(&StatusResponse {
+                    ok: false,
+                    message: Option::from("either username or password is wrong".to_string()),
+                }));
+                let reply = warp::reply::with_status(reply, StatusCode::OK);
+                Ok(reply)
+            }
+        },
+        None => {
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: reply,
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            Ok(reply)
+        }
+    }
+}
+
+// This function is needed for manual debugging.
 pub async fn riddle_get_by_level_handler(
     level: u32,
-    username: String,
+    _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
     println!("riddle_get_by_level_handler called, level = {}", level);
@@ -180,8 +524,10 @@ pub async fn riddle_get_by_level_handler(
                             name: file.name.clone(),
                             data: data,
                             mime_type: file.mime_type.clone(),
+                            scale: file.scale,
                             width: file.width,
                             height: file.height,
+                            variants: Option::default(),
                         })
                     }
                 }
@@ -193,15 +539,24 @@ pub async fn riddle_get_by_level_handler(
                     credits: Option::from(riddle.credits),
                 }));
                 let reply = warp::reply::with_status(reply, StatusCode::OK);
-                return Ok(reply);
+                Ok(reply)
             }
-            None => return Ok(warp::reply::with_status(empty_reply(), StatusCode::OK)),
+            None => {
+                let reply = warp::reply::json(&json!(&StatusResponse {
+                    ok: false,
+                    message: Option::from("riddle not found".to_string()),
+                }));
+                let reply = warp::reply::with_status(reply, StatusCode::OK);
+                Ok(reply)
+            }
         },
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                empty_reply(),
-                StatusCode::UNAUTHORIZED,
-            ));
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: true,
+                message: Option::from("either username or password is wrong".to_string()),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            Ok(reply)
         }
     }
 }
@@ -219,23 +574,40 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
     match db.get_user(&username).await {
         Ok(user) => {
             println!("got user {} with email {}", user.username, user.email);
+            let room_response = match db.get_room(&user.in_room.unwrap()).await {
+                Ok(room) => Option::from(RoomResponse {
+                    id: room.id,
+                    number: room.number,
+                    neighbors: room.neighbors,
+                    game_id: room.game_id,
+                    entry: room.entry,
+                    exit: room.exit,
+                }),
+                Err(_) => None,
+            };
             let reply = warp::reply::json(&json!(&UserWhoamiResponse {
                 username: user.username.clone(),
                 email: user.email.clone(),
                 role: user.role.clone(),
+                activated: user.activated,
                 created: Option::from(user.created),
                 registered: Option::from(user.registered),
                 last_login: Option::from(user.last_login),
                 level: user.level,
-                in_room: user.in_room,
+                in_room: room_response,
                 solved: user.solved,
+                jwt: Option::default(),
             }));
             let reply = warp::reply::with_status(reply, StatusCode::OK);
-            return Ok(reply);
+            Ok(reply)
         }
         Err(_) => {
-            let reply = warp::reply::with_status(empty_reply(), StatusCode::UNAUTHORIZED);
-            return Ok(reply);
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from("user not found".to_string()),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            Ok(reply)
         }
     }
 }
@@ -244,44 +616,56 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
     println!("user_login_handler called, username = {}", body.username);
     match db.get_user(&body.username).await {
         Ok(user) => {
-            println!(
-                "got user {} with salt {}",
-                user.username,
-                user.password.clone().unwrap().salt.as_str()
-            );
-            let salt = SaltString::new(user.password.clone().unwrap().salt.as_str()).unwrap();
-            // TODO: deduplicate code (see user_registration_handler())
-            let password_hash = Pbkdf2
-                .hash_password_customized(
-                    body.password.as_bytes(),
-                    Some(Ident::new(Algorithm::Pbkdf2Sha256.as_str())),
-                    None,
-                    Params {
-                        rounds: 10000,
-                        output_length: 32,
-                    },
-                    &salt,
-                )
-                .unwrap()
-                .to_string();
-            if password_hash == user.password.as_ref().unwrap().hash {
+            println!("got user {}\nwith hash  = {}", user.username, user.hash);
+            let matches = argon2::verify_encoded(&user.hash, body.password.as_bytes()).unwrap();
+            if matches {
                 println!("Hashes match. User is verified.");
                 let _ = db.login_user(&user).await;
-                let token_str = auth::create_jwt(&user.username, &Role::from_str(&user.role));
-                let reply = warp::reply::json(&json!(&UserActivationResponse {
-                    jwt: token_str.unwrap(),
+                let token_str = auth::create_jwt(&user.username, &user.role);
+                let room_response = match db.get_room(&user.in_room.unwrap()).await {
+                    Ok(room) => Option::from(RoomResponse {
+                        id: room.id,
+                        number: room.number,
+                        neighbors: room.neighbors,
+                        game_id: room.game_id,
+                        entry: room.entry,
+                        exit: room.exit,
+                    }),
+                    Err(_) => None,
+                };
+                let reply = warp::reply::json(&json!(&UserWhoamiResponse {
+                    username: user.username.clone(),
+                    email: user.email.clone(),
+                    role: user.role.clone(),
+                    activated: user.activated,
+                    created: Option::from(user.created),
+                    registered: Option::from(user.registered),
+                    last_login: Option::from(user.last_login),
+                    level: user.level,
+                    in_room: room_response,
+                    solved: user.solved,
+                    jwt: Option::from(token_str.unwrap()),
                 }));
                 let reply = warp::reply::with_status(reply, StatusCode::OK);
                 return Ok(reply);
+            } else {
+                let reply = warp::reply::json(&json!(&StatusResponse {
+                    ok: false,
+                    message: Option::from("either username or password is wrong".to_string()),
+                }));
+                let reply = warp::reply::with_status(reply, StatusCode::OK);
+                Ok(reply)
             }
         }
         Err(_) => {
-            let reply = warp::reply::with_status(empty_reply(), StatusCode::UNAUTHORIZED);
-            return Ok(reply);
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from("user not found".to_string()),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            Ok(reply)
         }
     }
-    let reply = warp::reply::with_status(empty_reply(), StatusCode::UNAUTHORIZED);
-    Ok(reply)
 }
 
 pub async fn user_activation_handler(
@@ -294,17 +678,42 @@ pub async fn user_activation_handler(
     );
     let user = db.get_user_with_pin(&body.username, body.pin).await;
     match user {
-        Ok(user) => {
-            let _ = db.activate_user(&user).await;
-            let token_str = auth::create_jwt(&user.username, &Role::from_str(&user.role));
-            let reply = warp::reply::json(&json!(&UserActivationResponse {
-                jwt: token_str.unwrap(),
+        Ok(mut user) => {
+            let _ = db.activate_user(&mut user).await;
+            let token_str = auth::create_jwt(&user.username, &user.role);
+            let room_response = match db.get_room(&user.in_room.unwrap()).await {
+                Ok(room) => Option::from(RoomResponse {
+                    id: room.id,
+                    number: room.number,
+                    neighbors: room.neighbors,
+                    game_id: room.game_id,
+                    entry: room.entry,
+                    exit: room.exit,
+                }),
+                Err(_) => None,
+            };
+            let reply = warp::reply::json(&json!(&UserWhoamiResponse {
+                username: user.username.clone(),
+                email: user.email.clone(),
+                role: user.role.clone(),
+                activated: user.activated,
+                created: Option::from(user.created),
+                registered: Option::from(user.registered),
+                last_login: Option::from(user.last_login),
+                level: user.level,
+                in_room: room_response,
+                solved: user.solved,
+                jwt: Option::from(token_str.unwrap()),
             }));
             let reply = warp::reply::with_status(reply, StatusCode::OK);
             Ok(reply)
         }
         Err(_) => {
-            let reply = warp::reply::with_status(empty_reply(), StatusCode::FORBIDDEN);
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from("User/PIN not found".to_string()),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
             Ok(reply)
         }
     }
@@ -318,46 +727,64 @@ pub async fn user_registration_handler(
         "user_register_handler called, username was: {}, email was: {}, role was: {}, password was: {}",
         body.username, body.email, body.role, body.password
     );
+    if body.password.len() < 8 {
+        let reply = warp::reply::json(&json!(&StatusResponse {
+            ok: false,
+            message: Option::from("password must be at least 8 characters long".to_string()),
+        }));
+        let reply = warp::reply::with_status(reply, StatusCode::OK);
+        return Ok(reply);
+    }
+    if bad_password(&body.password) {
+        println!("BAD PASSWORD: {}", body.password);
+        let reply = warp::reply::json(&json!(&StatusResponse {
+            ok: false,
+            message: Option::from("unsafe password".to_string()),
+        }));
+        let reply = warp::reply::with_status(reply, StatusCode::OK);
+        return Ok(reply);
+    }
     let user = db.get_user(&body.username).await;
     match user {
         Ok(_) => {
-            let reply = warp::reply::with_status(empty_reply(), StatusCode::FORBIDDEN);
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from("username not available".to_string()),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
             Ok(reply)
         }
         Err(_) => {
-            // generate salt, then run password through PBKDF2
-            let salt = SaltString::generate(&mut OsRng);
-            let password_hash = Pbkdf2
-                .hash_password_customized(
-                    body.password.as_bytes(),
-                    Some(Ident::new(Algorithm::Pbkdf2Sha256.as_str())),
-                    None,
-                    Params {
-                        rounds: 10000,
-                        output_length: 32,
-                    },
-                    &salt,
-                )
-                .unwrap()
-                .to_string();
-            println!("SALT: {}\nHASH: {}", salt.as_str(), password_hash);
-            let password: Option<Password> = Option::from(Password::new(
-                &String::from(salt.as_str()),
-                &String::from(password_hash),
-            ));
-            let pin: PinType = OsRng.next_u32() % 1000000;
+            let config = Config {
+                variant: Variant::Argon2i,
+                version: Version::Version13,
+                mem_cost: 65536,
+                time_cost: 10,
+                lanes: 4,
+                thread_mode: ThreadMode::Parallel,
+                secret: &[],
+                ad: &[],
+                hash_length: 32,
+            };
+            let salt: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
+            let hash = argon2::hash_encoded(body.password.as_bytes(), &salt, &config).unwrap();
+            println!("SALT: {:?}\nHASH: {}", salt, hash.clone());
+            let mut pin: PinType = 0;
+            while pin == 0 {
+                pin = OsRng.next_u32() % 1000000;
+            }
             let _result = db
                 .create_user(&User::new(
                     &body.username,
                     &body.email,
-                    &body.role,
-                    password,
+                    body.role,
+                    hash,
                     Option::from(pin),
                     false,
                     Option::from(Utc::now()),
                     Option::default(),
                     Option::default(),
-                    Box::new([]),
+                    Vec::new(),
                     0,
                     Option::default(),
                 ))
@@ -405,58 +832,21 @@ Your Labyrinth Host
                     );
                 }
             }
-            let reply = warp::reply::with_status(empty_reply(), StatusCode::OK);
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: true,
+                message: Option::default(),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
             Ok(reply)
         }
     }
 }
 
-pub async fn null_handler() -> WebResult<impl Reply> {
-    println!("null_handler called",);
-    Ok(StatusCode::OK)
-}
-
-pub async fn u32_handler(_: u32) -> WebResult<impl Reply> {
-    println!("u32_handler called",);
-    Ok(StatusCode::OK)
-}
-
-pub async fn string_handler(_: String) -> WebResult<impl Reply> {
-    println!("string_handler called",);
-    Ok(StatusCode::OK)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv().ok();
     let db = DB::init().await?;
-    /*
-    let mut headers = HeaderMap::new();
-    headers.insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
-    headers.insert(
-        "Access-Control-Allow-Headers",
-        HeaderValue::from_static("x-csrf-token,authorization,content-type,accept,origin,x-requested-with,access-control-allow-origin"));
-    headers.insert("Allow-Credentials", HeaderValue::from_static("true"));
-    headers.insert(
-        "Allow-Methods",
-        HeaderValue::from_static("GET,POST,PUT,PATCH,OPTIONS,DELETE"),
-    );
-    */
     let root = warp::path::end().map(|| "Labyrinth API root.");
-    /*
-    let cors = warp::cors()
-        .max_age(60 * 60 * 24 * 30)
-        .allow_any_origin()
-        .allow_credentials(true)
-        .allow_methods(&[
-            Method::GET,
-            Method::POST,
-            Method::DELETE,
-            Method::OPTIONS,
-            Method::PATCH,
-            Method::PUT,
-        ]);
-    let cors_route = warp::any().map(warp::reply).with(&cors);
-    */
     let ping_route = warp::path!("ping").and(warp::get()).map(warp::reply);
     let user_register_route = warp::path!("user" / "register")
         .and(warp::post())
@@ -487,15 +877,26 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(riddle_get_by_level_handler);
-    let room_info_route = warp::path!("room" / "info" / String)
+    let riddle_get_by_oid_route = warp::path!("riddle" / String)
         .and(warp::get())
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
-        .and_then(room_info_handler);
-
+        .and_then(riddle_get_oid_handler);
+    let riddle_solve_route = warp::path!("riddle" / "solve" / String / "with" / String)
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(riddle_solve_handler);
+    let go_route = warp::path!("go" / String)
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(go_handler);
     let routes = root
-        .or(room_info_route)
+        .or(riddle_get_by_oid_route)
         .or(riddle_get_by_level_route)
+        .or(riddle_solve_route)
+        .or(go_route)
         .or(user_whoami_route)
         .or(user_auth_route)
         .or(user_login_route)

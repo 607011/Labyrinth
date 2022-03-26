@@ -19,6 +19,8 @@ pub enum Error {
     InvalidIDError(String),
     #[error("user not found")]
     UserNotFoundError,
+    #[error("user update failed")]
+    UserUpdateError,
     #[error("riddle not found")]
     RiddleNotFoundError,
     #[error("room not found")]

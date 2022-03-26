@@ -2,8 +2,8 @@
  * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
  * All rights reserved.
  */
-use crate::{error::Error::*, Result};
-use bson::{oid::ObjectId, Bson};
+use crate::{auth::Role, error::Error::*, Result};
+use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use mongodb::bson::doc;
 use mongodb::options::ClientOptions;
@@ -15,28 +15,10 @@ use warp::Filter;
 
 pub type PinType = u32;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Password {
-    pub salt: String,
-    pub hash: String,
-}
-
-impl Password {
-    pub fn new(salt: &String, hash: &String) -> Self {
-        Password {
-            salt: salt.to_string(),
-            hash: hash.to_string(),
-        }
-    }
-}
-
-impl Into<Bson> for Password {
-    fn into(self) -> bson::Bson {
-        bson::Bson::Document(doc! {
-            "salt": self.salt,
-            "hash": self.hash,
-        })
-    }
+#[derive(Deserialize, Serialize, Debug)]
+pub struct UploadedFileVariant {
+    pub name: String,
+    pub scale: Option<u32>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -44,10 +26,13 @@ pub struct UploadedFile {
     #[serde(rename = "fileId")]
     pub file_id: ObjectId,
     pub name: String,
+    pub retina: Option<String>,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub scale: Option<u32>,
+    pub variants: Option<Vec<UploadedFileVariant>>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -55,7 +40,8 @@ pub struct Riddle {
     #[serde(rename = "_id")]
     pub id: ObjectId,
     pub level: u32,
-    pub files: Option<Box<[UploadedFile]>>,
+    pub files: Option<Vec<UploadedFile>>,
+    pub solution: String,
     pub task: Option<String>,
     pub credits: Option<String>,
 }
@@ -68,10 +54,18 @@ pub struct Direction {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+pub struct Game {
+    #[serde(rename = "_id")]
+    pub id: ObjectId,
+    pub name: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Room {
     #[serde(rename = "_id")]
     pub id: ObjectId,
-    pub neighbors: Box<[Direction]>,
+    pub number: u32,
+    pub neighbors: Vec<Direction>,
     pub game_id: ObjectId,
     pub entry: Option<bool>,
     pub exit: Option<bool>,
@@ -83,8 +77,8 @@ pub struct User {
     pub id: ObjectId,
     pub username: String,
     pub email: String,
-    pub role: String,
-    pub password: Option<Password>,
+    pub role: Role,
+    pub hash: String,
     pub pin: Option<PinType>,
     pub activated: bool,
     #[serde(default)]
@@ -96,7 +90,7 @@ pub struct User {
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
-    pub solved: Box<[Riddle]>,
+    pub solved: Vec<ObjectId>,
     pub level: u32,
     pub in_room: Option<ObjectId>,
 }
@@ -105,14 +99,14 @@ impl User {
     pub fn new(
         username: &String,
         email: &String,
-        role: &String,
-        password: Option<Password>,
+        role: Role,
+        hash: String,
         pin: Option<PinType>,
         activated: bool,
         created: Option<DateTime<Utc>>,
         registered: Option<DateTime<Utc>>,
         last_login: Option<DateTime<Utc>>,
-        solved: Box<[Riddle]>,
+        solved: Vec<ObjectId>,
         level: u32,
         in_room: Option<ObjectId>,
     ) -> Self {
@@ -120,8 +114,8 @@ impl User {
             id: ObjectId::new(),
             username: username.to_string(),
             email: email.to_string(),
-            role: role.to_string(),
-            password: password,
+            role: role,
+            hash: hash,
             pin: pin,
             activated: activated,
             created: created,
@@ -166,15 +160,15 @@ impl DB {
         self.client.database(&self.name)
     }
 
-    fn get_users_coll(&self) -> Collection<User> {
+    pub fn get_users_coll(&self) -> Collection<User> {
         self.get_database().collection::<User>(&self.coll_users)
     }
 
-    fn get_riddles_coll(&self) -> Collection<Riddle> {
+    pub fn get_riddles_coll(&self) -> Collection<Riddle> {
         self.get_database().collection::<Riddle>(&self.coll_riddles)
     }
 
-    fn get_rooms_coll(&self) -> Collection<Room> {
+    pub fn get_rooms_coll(&self) -> Collection<Room> {
         self.get_database().collection::<Room>(&self.coll_rooms)
     }
 
@@ -192,6 +186,84 @@ impl DB {
                 Ok(Option::default())
             }
         }
+    }
+
+    pub async fn get_riddle_by_oid(&self, oid: ObjectId) -> Result<Option<Riddle>> {
+        println!("get_riddle_by_oid(\"{:?}\")", oid);
+        let coll = self.get_riddles_coll();
+        let result = coll.find_one(doc! { "_id": oid }, None).await.unwrap();
+        match result {
+            Some(riddle) => {
+                println!("Found {}", riddle.level);
+                Ok(Some(riddle))
+            }
+            None => {
+                println!("riddle not found");
+                Ok(Option::default())
+            }
+        }
+    }
+
+    pub async fn is_riddle_accessible(
+        &self,
+        oid: &ObjectId,
+        username: &String,
+    ) -> (Option<ObjectId>, Option<User>, Option<String>) {
+        // get the user associated with the request
+        let user = match self.get_user(&username).await {
+            Ok(user) => user,
+            Err(_) => {
+                return (
+                    Option::default(),
+                    Option::default(),
+                    Option::from("either username or password is wrong".to_string()),
+                );
+            }
+        };
+        // get the ID of the room the user is in
+        let in_room = match user.in_room {
+            Some(in_room) => in_room,
+            None => {
+                return (
+                    Option::default(),
+                    Option::default(),
+                    Option::from("User is nowhere. That should not have happened :-/".to_string()),
+                );
+            }
+        };
+        // get the room
+        let room = match self.get_room(&in_room).await {
+            Ok(room) => room,
+            Err(_) => {
+                return (
+                    Option::default(),
+                    Option::default(),
+                    Option::from("room not found".to_string()),
+                );
+            }
+        };
+        // Check if one of the doorways is associated with the requested riddle.
+        // This is to make sure, the user is not granted access to a riddle
+        // they can't see from the current location (room).
+        let found = match room
+            .neighbors
+            .iter()
+            .find(|neighbor| neighbor.riddle_id == *oid)
+        {
+            Some(neighbor) => neighbor,
+            None => {
+                return (
+                    Option::default(),
+                    Option::default(),
+                    Option::from("doorway not accessible".to_string()),
+                );
+            }
+        };
+        (
+            Option::from(found.riddle_id),
+            Option::from(user),
+            Option::default(),
+        )
     }
 
     pub async fn get_user(&self, username: &String) -> Result<User> {
@@ -213,8 +285,8 @@ impl DB {
         }
     }
 
-    pub async fn get_room_info(&self, oid: &ObjectId) -> Result<Room> {
-        println!("get_room_info(\"{}\")", oid);
+    pub async fn get_room(&self, oid: &ObjectId) -> Result<Room> {
+        println!("get_room(\"{}\")", oid);
         let coll = self.get_rooms_coll();
         let result = coll.find_one(doc! { "_id": oid }, None).await.unwrap();
         match result {
@@ -251,6 +323,7 @@ impl DB {
         }
     }
 
+    /*
     pub async fn get_user_with_password(
         &self,
         username: &String,
@@ -276,6 +349,7 @@ impl DB {
             }
         }
     }
+    */
 
     pub async fn create_user(&mut self, user: &User) -> Result<()> {
         self.get_users_coll()
@@ -286,7 +360,7 @@ impl DB {
     }
 
     pub async fn login_user(&mut self, user: &User) -> Result<()> {
-        let result = self
+        match self
             .get_users_coll()
             .update_one(
                 doc! { "username": user.username.clone(), "activated": true },
@@ -295,47 +369,56 @@ impl DB {
                 },
                 None,
             )
-            .await;
-        match result {
+            .await
+        {
             Ok(_) => {
                 println!("Updated {}.", user.username);
+                Ok(())
             }
             Err(e) => {
                 println!("Error: update failed ({:?})", e);
+                Err(UserUpdateError)
             }
         }
-        Ok(())
     }
 
-    pub async fn activate_user(&mut self, user: &User) -> Result<()> {
-        let first_room: Option<Room> = self
+    pub async fn activate_user(&mut self, user: &mut User) -> Result<()> {
+        let entrance: Option<Room> = self
             .get_rooms_coll()
             .find_one(
-                doc! { "_id": ObjectId::parse_str("6236fd5198083f2eb4fd6fb0").unwrap() },
-                // doc! { "entry": true },
+                doc! {
+                    "entry": true,
+                    /* XXX: choose a game_id */
+                },
                 None,
             )
             .await
             .unwrap();
-        match first_room {
+        let first_room_id = match entrance {
             Some(ref room) => {
                 println!("Found room {}", room.id);
+                Option::from(room.id)
             }
             None => {
                 println!("room not found");
-                // Err(RoomNotFoundError)
+                None
             }
-        }
+        };
         let query = doc! { "username": user.username.clone(), "activated": false };
+        user.activated = true;
+        user.registered = Option::from(Utc::now());
+        user.last_login = Option::from(Utc::now());
+        user.in_room = first_room_id;
+        user.pin = Option::default();
         let modification = doc! {
             "$set": {
-                "activated": true,
+                "activated": user.activated,
                 "registered": Utc::now().timestamp() as u32,
                 "last_login": Utc::now().timestamp() as u32,
-                "in_room": first_room.unwrap().id,
+                "in_room": first_room_id.unwrap(),
             },
             "$unset": {
-                "pin": 0,
+                "pin": 0 as u32,
             },
         };
         let result = self
