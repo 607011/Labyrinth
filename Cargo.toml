@@ -1,6 +1,6 @@
 [package]
 name = "labyrinth"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 authors = ["Oliver Lau <oliver@ersatzworld.net>"]
 description = "Backend (REST API) for an escape room like web-based game"
@@ -10,25 +10,28 @@ keywords = ["gamedev"]
 opt-level = 0
 
 [dependencies]
-hyper = { version = "0.14.17", features = ["full"] }
-tokio = { version = "1.17.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "*"
-jsonwebtoken = "7.2.0"
-warp = "0.3.2"
-chrono = { version = "0.4", features = ["serde"]}
-bson = { version = "2.1.0", features = ["chrono-0_4", "serde_with", "uuid-0_8"] }
-uuid = "0.8.2"
-futures = "0.3.21"
-pbkdf2 = "0.10.1"
-rand_core = { version = "0.6", features = ["std"] }
-lazy_static = "1.4.0"
-lettre = "0.10.0-rc.1"
-mongodb-gridfs = "0.2.2"
-base64 = "*"
+hyper = { version = ">= 0.14.17", features = ["full"] }
+tokio = { version = ">= 1.17.0", features = ["full"] }
+serde = { version = ">= 1.0", features = ["derive"] }
+serde_json = ">= 1.0"
+thiserror = ">= 1.0.30"
+jsonwebtoken = ">= 7.2.0"
+warp = ">=0.3.2"
+chrono = { version = ">=0.4", features = ["serde"]}
+bson = { version = ">=2.1.0", features = ["chrono-0_4", "serde_with", "uuid-0_8"] }
+#uuid = ">= 0.8.2"
+futures = ">=0.3.21"
+rand_core = { version = ">= 0.6", features = ["std"] }
+lazy_static = ">= 1.4.0"
+lettre = ">= 0.10.0-rc.1"
+mongodb-gridfs = ">= 0.2.2"
+base64 = ">= 0.13.0"
+dotenv = ">= 0.15.0"
+md5 = ">= 0.7.0"
+rust-argon2 = ">= 1.0"
+rand = ">= 0.8.5"
 
 [dependencies.mongodb]
-version = "2.1.0"
+version = ">= 2.1.0"
 default-features = false
 features = ["tokio-runtime", "bson-uuid-0_8", "zlib-compression"]
