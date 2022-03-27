@@ -172,6 +172,18 @@ impl DB {
         self.get_database().collection::<Room>(&self.coll_rooms)
     }
 
+    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<u64>> {
+        println!("get_num_riddles(\"{}\")", game_id);
+        match self
+            .get_rooms_coll()
+            .count_documents(doc! { "game_id": game_id }, None)
+            .await
+        {
+            Ok(count) => Ok(Some(count)),
+            Err(_) => Ok(Option::default()),
+        }
+    }
+
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
         println!("get_riddle_by_level(\"{}\")", level);
         let coll = self.get_riddles_coll();

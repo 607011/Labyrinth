@@ -176,6 +176,12 @@ pub struct SteppedThroughResponse {
     pub room: RoomResponse,
 }
 
+#[derive(Serialize, Debug)]
+pub struct NumRiddlesResponse {
+    pub ok: bool,
+    pub num_riddles: u64,
+}
+
 pub async fn go_handler(direction: String, username: String, db: DB) -> WebResult<impl Reply> {
     println!(
         "go_handler called, direction = {}, username = {}",
@@ -495,6 +501,32 @@ pub async fn riddle_get_oid_handler(
     }
 }
 
+pub async fn num_riddles_handler(
+    game_id: String,
+    _username: String,
+    db: DB,
+) -> WebResult<impl Reply> {
+    println!("num_riddles_handler called, game_id = {}", game_id);
+    let game_id = ObjectId::parse_str(game_id).unwrap();
+    let num_riddles = match db.get_num_riddles(&game_id).await {
+        Ok(num_riddles) => num_riddles,
+        Err(_) => {
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from("no riddles found".to_string()),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            return Ok(reply);
+        }
+    };
+    let reply = warp::reply::json(&json!(&NumRiddlesResponse {
+        ok: true,
+        num_riddles: num_riddles.unwrap(),
+    }));
+    let reply = warp::reply::with_status(reply, StatusCode::OK);
+    Ok(reply)
+}
+
 // This function is needed for manual debugging.
 pub async fn riddle_get_by_level_handler(
     level: u32,
@@ -768,7 +800,6 @@ pub async fn user_registration_handler(
             };
             let salt: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
             let hash = argon2::hash_encoded(body.password.as_bytes(), &salt, &config).unwrap();
-            println!("SALT: {:?}\nHASH: {}", salt, hash.clone());
             let mut pin: PinType = 0;
             while pin == 0 {
                 pin = OsRng.next_u32() % 1000000;
@@ -847,6 +878,7 @@ async fn main() -> Result<()> {
     dotenv().ok();
     let db = DB::init().await?;
     let root = warp::path::end().map(|| "Labyrinth API root.");
+    /* Routes accessible to all users */
     let ping_route = warp::path!("ping").and(warp::get()).map(warp::reply);
     let user_register_route = warp::path!("user" / "register")
         .and(warp::post())
@@ -863,6 +895,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json())
         .and(with_db(db.clone()))
         .and_then(user_login_handler);
+    /* Routes accessible only to authorized users */
     let user_auth_route = warp::path!("user" / "auth")
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -872,11 +905,6 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(user_whoami_handler);
-    let riddle_get_by_level_route = warp::path!("riddle" / "by" / "level" / u32)
-        .and(warp::get())
-        .and(with_auth(Role::User))
-        .and(with_db(db.clone()))
-        .and_then(riddle_get_by_level_handler);
     let riddle_get_by_oid_route = warp::path!("riddle" / String)
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -892,6 +920,18 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(go_handler);
+    let num_riddles_route = warp::path!("riddles" / String)
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(num_riddles_handler);
+    /* Routes accessible only to authorized admins */
+    let riddle_get_by_level_route = warp::path!("riddle" / "by" / "level" / u32)
+        .and(warp::get())
+        .and(with_auth(Role::Admin))
+        .and(with_db(db.clone()))
+        .and_then(riddle_get_by_level_handler);
+
     let routes = root
         .or(riddle_get_by_oid_route)
         .or(riddle_get_by_level_route)
@@ -903,6 +943,7 @@ async fn main() -> Result<()> {
         .or(user_register_route)
         .or(user_activation_route)
         .or(ping_route)
+        .or(num_riddles_route)
         .or(warp::any().and(warp::options()).map(warp::reply));
     //.recover(error::handle_rejection);
 
