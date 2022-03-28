@@ -124,6 +124,7 @@ pub struct UserWhoamiResponse {
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
     pub level: u32,
+    pub score: u32,
     pub in_room: Option<RoomResponse>,
     pub solved: Vec<ObjectId>,
     pub jwt: Option<String>,
@@ -362,16 +363,18 @@ pub async fn riddle_solve_handler(
                 Some(riddle) => {
                     println!("got riddle {}", riddle.level);
                     let solved = riddle.solution == solution;
-                    let user = user.unwrap();
+                    let mut user = user.unwrap();
                     if solved {
                         let mut solutions = user.solved;
                         solutions.push(riddle.id);
+                        user.level = riddle.level.max(user.level);
+                        user.score += riddle.difficulty;
                         let result = db
                             .get_users_coll()
                             .update_one(
                                 doc! { "_id": user.id, "activated": true },
                                 doc! {
-                                    "$set": { "solved": solutions, "level": riddle.level.max(user.level) },
+                                    "$set": { "solved": solutions, "level": user.level, "score": user.score },
                                 },
                                 None,
                             )
@@ -626,6 +629,7 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
                 registered: Option::from(user.registered),
                 last_login: Option::from(user.last_login),
                 level: user.level,
+                score: user.score,
                 in_room: room_response,
                 solved: user.solved,
                 jwt: Option::default(),
@@ -674,6 +678,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
                     registered: Option::from(user.registered),
                     last_login: Option::from(user.last_login),
                     level: user.level,
+                    score: user.score,
                     in_room: room_response,
                     solved: user.solved,
                     jwt: Option::from(token_str.unwrap()),
@@ -733,6 +738,7 @@ pub async fn user_activation_handler(
                 registered: Option::from(user.registered),
                 last_login: Option::from(user.last_login),
                 level: user.level,
+                score: user.score,
                 in_room: room_response,
                 solved: user.solved,
                 jwt: Option::from(token_str.unwrap()),
@@ -816,6 +822,7 @@ pub async fn user_registration_handler(
                     Option::default(),
                     Option::default(),
                     Vec::new(),
+                    0,
                     0,
                     Option::default(),
                 ))
@@ -947,6 +954,9 @@ async fn main() -> Result<()> {
         .or(warp::any().and(warp::options()).map(warp::reply));
     //.recover(error::handle_rejection);
 
+    const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
+    const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+    println!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
     let host = env::var("API_HOST").expect("API_HOST is not in .env file");
     let addr: SocketAddr = host.parse().expect("Cannot parse host address");
     println!("Listening on http://{}", host);
