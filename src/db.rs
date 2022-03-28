@@ -39,10 +39,17 @@ pub struct UploadedFile {
 pub struct Riddle {
     #[serde(rename = "_id")]
     pub id: ObjectId,
+    #[serde(default)]
+    pub difficulty: u32,
+    #[serde(default)]
     pub level: u32,
+    #[serde(default)]
     pub files: Option<Vec<UploadedFile>>,
+    #[serde(default)]
     pub solution: String,
+    #[serde(default)]
     pub task: Option<String>,
+    #[serde(default)]
     pub credits: Option<String>,
 }
 
@@ -64,10 +71,14 @@ pub struct Game {
 pub struct Room {
     #[serde(rename = "_id")]
     pub id: ObjectId,
+    #[serde(default)]
     pub number: u32,
     pub neighbors: Vec<Direction>,
+    #[serde(default)]
     pub game_id: ObjectId,
+    #[serde(default)]
     pub entry: Option<bool>,
+    #[serde(default)]
     pub exit: Option<bool>,
 }
 
@@ -91,7 +102,10 @@ pub struct User {
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
     pub solved: Vec<ObjectId>,
+    #[serde(default)]
     pub level: u32,
+    #[serde(default)]
+    pub score: u32,
     pub in_room: Option<ObjectId>,
 }
 
@@ -108,6 +122,7 @@ impl User {
         last_login: Option<DateTime<Utc>>,
         solved: Vec<ObjectId>,
         level: u32,
+        score: u32,
         in_room: Option<ObjectId>,
     ) -> Self {
         User {
@@ -123,6 +138,7 @@ impl User {
             last_login: last_login,
             solved: solved,
             level: level,
+            score: score,
             in_room: in_room,
         }
     }
