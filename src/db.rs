@@ -200,10 +200,10 @@ impl DB {
         // XXX: wrong query
         match self
             .get_rooms_coll()
-            .count_documents(doc! { "game_id": game_id }, None)
+            .distinct("neighbors.riddle_id", doc! { "game_id": game_id }, None)
             .await
         {
-            Ok(count) => Ok(Some(count as u32)),
+            Ok(result) => Ok(Some(result.len() as u32)),
             Err(_) => Ok(Option::default()),
         }
     }
