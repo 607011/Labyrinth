@@ -78,6 +78,8 @@ pub struct UserRegistrationRequest {
     pub email: String,
     pub role: Role,
     pub password: String,
+    #[serde(default)]
+    pub locale: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -127,6 +129,7 @@ pub struct UserWhoamiResponse {
     pub score: u32,
     pub in_room: Option<RoomResponse>,
     pub solved: Vec<ObjectId>,
+    pub rooms_entered: Vec<ObjectId>,
     pub jwt: Option<String>,
 }
 
@@ -159,6 +162,7 @@ pub struct RiddleResponse {
     pub level: u32,
     pub files: Option<Vec<FileResponse>>,
     pub task: Option<String>,
+    pub difficulty: u32,
     pub credits: Option<String>,
 }
 
@@ -178,9 +182,11 @@ pub struct SteppedThroughResponse {
 }
 
 #[derive(Serialize, Debug)]
-pub struct NumRiddlesResponse {
+pub struct GameStatsResponse {
     pub ok: bool,
-    pub num_riddles: u64,
+    pub num_rooms: u32,
+    pub num_riddles: u32,
+    pub max_score: u32,
 }
 
 pub async fn go_handler(direction: String, username: String, db: DB) -> WebResult<impl Reply> {
@@ -230,6 +236,7 @@ pub async fn go_handler(direction: String, username: String, db: DB) -> WebResul
                                                 doc! { "_id": user.id, "activated": true },
                                                 doc! {
                                                     "$set": { "in_room": user.in_room },
+                                                    "$addToSet": { "rooms_entered": user.in_room },
                                                 },
                                                 None,
                                             )
@@ -361,7 +368,10 @@ pub async fn riddle_solve_handler(
         Some(riddle_id) => match db.get_riddle_by_oid(riddle_id).await {
             Ok(riddle) => match riddle {
                 Some(riddle) => {
-                    println!("got riddle {}", riddle.level);
+                    println!(
+                        "got riddle {}, difficulty {}",
+                        riddle.level, riddle.difficulty
+                    );
                     let solved = riddle.solution == solution;
                     let mut user = user.unwrap();
                     if solved {
@@ -468,6 +478,7 @@ pub async fn riddle_get_oid_handler(
                     let reply = warp::reply::json(&json!(&RiddleResponse {
                         id: riddle.id,
                         level: riddle.level,
+                        difficulty: riddle.difficulty,
                         files: Option::from(found_files),
                         task: Option::from(riddle.task),
                         credits: Option::from(riddle.credits),
@@ -504,27 +515,40 @@ pub async fn riddle_get_oid_handler(
     }
 }
 
-pub async fn num_riddles_handler(
+pub async fn game_stats_handler(
     game_id: String,
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("num_riddles_handler called, game_id = {}", game_id);
+    println!("game_stats_handler called, game_id = {}", game_id);
     let game_id = ObjectId::parse_str(game_id).unwrap();
-    let num_riddles = match db.get_num_riddles(&game_id).await {
-        Ok(num_riddles) => num_riddles,
+    let num_rooms = match db.get_num_rooms(&game_id).await {
+        Ok(num_rooms) => num_rooms,
         Err(_) => {
             let reply = warp::reply::json(&json!(&StatusResponse {
                 ok: false,
-                message: Option::from("no riddles found".to_string()),
+                message: Option::from(format!("no rooms found for game ID {}", game_id)),
             }));
             let reply = warp::reply::with_status(reply, StatusCode::OK);
             return Ok(reply);
         }
     };
-    let reply = warp::reply::json(&json!(&NumRiddlesResponse {
+    let num_riddles = match db.get_num_riddles(&game_id).await {
+        Ok(num_riddles) => num_riddles,
+        Err(_) => {
+            let reply = warp::reply::json(&json!(&StatusResponse {
+                ok: false,
+                message: Option::from(format!("no riddles found for game ID {}", game_id)),
+            }));
+            let reply = warp::reply::with_status(reply, StatusCode::OK);
+            return Ok(reply);
+        }
+    };
+    let reply = warp::reply::json(&json!(&GameStatsResponse {
         ok: true,
-        num_riddles: num_riddles.unwrap(),
+        num_rooms: num_rooms.unwrap(),
+        num_riddles: num_riddles.unwrap(), // TODO
+        max_score: 0,                      // TODO
     }));
     let reply = warp::reply::with_status(reply, StatusCode::OK);
     Ok(reply)
@@ -569,6 +593,7 @@ pub async fn riddle_get_by_level_handler(
                 let reply = warp::reply::json(&json!(&RiddleResponse {
                     id: riddle.id,
                     level: riddle.level,
+                    difficulty: riddle.difficulty,
                     files: Option::from(found_files),
                     task: Option::from(riddle.task),
                     credits: Option::from(riddle.credits),
@@ -632,6 +657,7 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
                 score: user.score,
                 in_room: room_response,
                 solved: user.solved,
+                rooms_entered: user.rooms_entered,
                 jwt: Option::default(),
             }));
             let reply = warp::reply::with_status(reply, StatusCode::OK);
@@ -681,6 +707,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
                     score: user.score,
                     in_room: room_response,
                     solved: user.solved,
+                    rooms_entered: user.rooms_entered,
                     jwt: Option::from(token_str.unwrap()),
                 }));
                 let reply = warp::reply::with_status(reply, StatusCode::OK);
@@ -741,6 +768,7 @@ pub async fn user_activation_handler(
                 score: user.score,
                 in_room: room_response,
                 solved: user.solved,
+                rooms_entered: user.rooms_entered,
                 jwt: Option::from(token_str.unwrap()),
             }));
             let reply = warp::reply::with_status(reply, StatusCode::OK);
@@ -817,14 +845,6 @@ pub async fn user_registration_handler(
                     body.role,
                     hash,
                     Option::from(pin),
-                    false,
-                    Option::from(Utc::now()),
-                    Option::default(),
-                    Option::default(),
-                    Vec::new(),
-                    0,
-                    0,
-                    Option::default(),
                 ))
                 .await;
             let email = Message::builder()
@@ -927,11 +947,11 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(go_handler);
-    let num_riddles_route = warp::path!("riddles" / String)
+    let game_stats_route = warp::path!("game" / "stats" / String)
         .and(warp::get())
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
-        .and_then(num_riddles_handler);
+        .and_then(game_stats_handler);
     /* Routes accessible only to authorized admins */
     let riddle_get_by_level_route = warp::path!("riddle" / "by" / "level" / u32)
         .and(warp::get())
@@ -950,7 +970,7 @@ async fn main() -> Result<()> {
         .or(user_register_route)
         .or(user_activation_route)
         .or(ping_route)
-        .or(num_riddles_route)
+        .or(game_stats_route)
         .or(warp::any().and(warp::options()).map(warp::reply));
     //.recover(error::handle_rejection);
 

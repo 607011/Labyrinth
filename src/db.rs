@@ -103,6 +103,8 @@ pub struct User {
     pub last_login: Option<DateTime<Utc>>,
     pub solved: Vec<ObjectId>,
     #[serde(default)]
+    pub rooms_entered: Vec<ObjectId>,
+    #[serde(default)]
     pub level: u32,
     #[serde(default)]
     pub score: u32,
@@ -116,14 +118,6 @@ impl User {
         role: Role,
         hash: String,
         pin: Option<PinType>,
-        activated: bool,
-        created: Option<DateTime<Utc>>,
-        registered: Option<DateTime<Utc>>,
-        last_login: Option<DateTime<Utc>>,
-        solved: Vec<ObjectId>,
-        level: u32,
-        score: u32,
-        in_room: Option<ObjectId>,
     ) -> Self {
         User {
             id: ObjectId::new(),
@@ -132,14 +126,15 @@ impl User {
             role: role,
             hash: hash,
             pin: pin,
-            activated: activated,
-            created: created,
-            registered: registered,
-            last_login: last_login,
-            solved: solved,
-            level: level,
-            score: score,
-            in_room: in_room,
+            activated: false,
+            created: Option::from(Utc::now()),
+            registered: Option::default(),
+            last_login: Option::default(),
+            solved: Vec::new(),
+            rooms_entered: Vec::new(),
+            level: 0,
+            score: 0,
+            in_room: Option::default(),
         }
     }
 }
@@ -188,14 +183,27 @@ impl DB {
         self.get_database().collection::<Room>(&self.coll_rooms)
     }
 
-    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<u64>> {
-        println!("get_num_riddles(\"{}\")", game_id);
+    pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<Option<u32>> {
+        println!("get_num_rooms(\"{}\")", game_id);
         match self
             .get_rooms_coll()
             .count_documents(doc! { "game_id": game_id }, None)
             .await
         {
-            Ok(count) => Ok(Some(count)),
+            Ok(count) => Ok(Some(count as u32)),
+            Err(_) => Ok(Option::default()),
+        }
+    }
+
+    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<u32>> {
+        println!("get_num_riddles(\"{}\")", game_id);
+        // XXX: wrong query
+        match self
+            .get_rooms_coll()
+            .count_documents(doc! { "game_id": game_id }, None)
+            .await
+        {
+            Ok(count) => Ok(Some(count as u32)),
             Err(_) => Ok(Option::default()),
         }
     }
@@ -437,13 +445,15 @@ impl DB {
         user.registered = Option::from(Utc::now());
         user.last_login = Option::from(Utc::now());
         user.in_room = first_room_id;
+        user.rooms_entered.push(user.in_room.unwrap());
         user.pin = Option::default();
         let modification = doc! {
             "$set": {
                 "activated": user.activated,
                 "registered": Utc::now().timestamp() as u32,
                 "last_login": Utc::now().timestamp() as u32,
-                "in_room": first_room_id.unwrap(),
+                "in_room": user.in_room.unwrap(),
+                "rooms_entered": &user.rooms_entered,
             },
             "$unset": {
                 "pin": 0 as u32,
