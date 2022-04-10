@@ -17,14 +17,28 @@ pub enum Error {
     MongoDataError(#[from] bson::document::ValueAccessError),
     #[error("invalid id used: {0}")]
     InvalidIDError(String),
+    #[error("unsafe password")]
+    UnsafePasswordError,
     #[error("user not found")]
     UserNotFoundError,
+    #[error("username not available")]
+    UsernameNotAvailableError,
+    #[error("mail address is not valid")]
+    InvalidEmailError,
     #[error("user update failed")]
     UserUpdateError,
     #[error("riddle not found")]
     RiddleNotFoundError,
     #[error("room not found")]
     RoomNotFoundError,
+    #[error("user is in no room")]
+    UserIsInNoRoom,
+    #[error("neighbor not found")]
+    NeighborNotFoundError,
+    #[error("room behind not found")]
+    RoomBehindNotFoundError,
+    #[error("riddle not solved")]
+    RiddleNotSolvedError,
     #[error("wrong credentials")]
     WrongCredentialsError,
     #[error("jwt token not valid")]
@@ -37,12 +51,16 @@ pub enum Error {
     InvalidAuthHeaderError,
     #[error("no permission")]
     NoPermissionError,
+    #[error("cheating is taboo")]
+    CheatError,
 }
 
 #[derive(Serialize, Debug)]
 struct ErrorResponse {
-    message: String,
+    ok: bool,
+    code: u16,
     status: String,
+    message: String,
 }
 
 impl warp::reject::Reject for Error {}
@@ -52,6 +70,12 @@ pub async fn handle_rejection(err: Rejection) -> std::result::Result<impl Reply,
         (StatusCode::NOT_FOUND, "Not Found".to_string())
     } else if let Some(e) = err.find::<Error>() {
         match e {
+            Error::CheatError => (StatusCode::PAYMENT_REQUIRED, e.to_string()),
+            Error::RoomBehindNotFoundError => (StatusCode::CONFLICT, e.to_string()),
+            Error::NeighborNotFoundError => (StatusCode::CONFLICT, e.to_string()),
+            Error::UnsafePasswordError => (StatusCode::CONFLICT, e.to_string()),
+            Error::InvalidEmailError => (StatusCode::CONFLICT, e.to_string()),
+            Error::UsernameNotAvailableError => (StatusCode::CONFLICT, e.to_string()),
             Error::WrongCredentialsError => (StatusCode::FORBIDDEN, e.to_string()),
             Error::NoPermissionError => (StatusCode::UNAUTHORIZED, e.to_string()),
             Error::JWTTokenError => (StatusCode::UNAUTHORIZED, e.to_string()),
@@ -73,11 +97,11 @@ pub async fn handle_rejection(err: Rejection) -> std::result::Result<impl Reply,
             "Internal Server Error".to_string(),
         )
     };
-
     let json = warp::reply::json(&ErrorResponse {
+        ok: false,
+        code: code.as_u16(),
         status: code.to_string(),
-        message,
+        message: message,
     });
-
     Ok(warp::reply::with_status(json, code))
 }

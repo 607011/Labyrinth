@@ -310,14 +310,8 @@ impl DB {
             .await
             .unwrap();
         match result {
-            Some(user) => {
-                println!("Found {} <{}>", user.username, user.email);
-                Ok(user)
-            }
-            None => {
-                println!("user not found");
-                Err(UserNotFoundError)
-            }
+            Some(user) => Ok(user),
+            None => Err(UserNotFoundError),
         }
     }
 
@@ -326,14 +320,38 @@ impl DB {
         let coll = self.get_rooms_coll();
         let result = coll.find_one(doc! { "_id": oid }, None).await.unwrap();
         match result {
-            Some(room) => {
-                println!("Found {}", room.id);
-                Ok(room)
-            }
-            None => {
-                println!("room not found");
-                Err(RoomNotFoundError)
-            }
+            Some(room) => Ok(room),
+            None => Err(RoomNotFoundError),
+        }
+    }
+
+    pub async fn get_room_behind(
+        &self,
+        opposite: &String,
+        riddle_id: &bson::oid::ObjectId,
+    ) -> Result<Room> {
+        println!("get_room_behind(\"{}\", \"{}\")", opposite, riddle_id);
+        let result = self
+            .get_rooms_coll()
+            .find_one(
+                doc! {
+                    "neighbors": {
+                        "$elemMatch": {
+                            "direction": opposite,
+                            "riddle_id": riddle_id,
+                        }
+                    }
+                },
+                None,
+            )
+            .await;
+        let room = match result {
+            Ok(room) => room,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        match room {
+            Some(room) => Ok(room),
+            None => Err(RoomBehindNotFoundError),
         }
     }
 
@@ -388,11 +406,10 @@ impl DB {
     */
 
     pub async fn create_user(&mut self, user: &User) -> Result<()> {
-        self.get_users_coll()
-            .insert_one(user, None)
-            .await
-            .map_err(MongoQueryError)?;
-        Ok(())
+        match self.get_users_coll().insert_one(user, None).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
     }
 
     pub async fn login_user(&mut self, user: &User) -> Result<()> {
@@ -413,13 +430,13 @@ impl DB {
             }
             Err(e) => {
                 println!("Error: update failed ({:?})", e);
-                Err(UserUpdateError)
+                Err(MongoQueryError(e))
             }
         }
     }
 
     pub async fn activate_user(&mut self, user: &mut User) -> Result<()> {
-        let entrance: Option<Room> = self
+        let entrance = match self
             .get_rooms_coll()
             .find_one(
                 doc! {
@@ -429,46 +446,47 @@ impl DB {
                 None,
             )
             .await
-            .unwrap();
+        {
+            Ok(entrance) => entrance,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
         let first_room_id = match entrance {
-            Some(ref room) => {
+            Some(room) => {
                 println!("Found room {}", room.id);
-                Option::from(room.id)
+                room.id
             }
-            None => {
-                println!("room not found");
-                None
-            }
+            None => return Err(RoomNotFoundError),
         };
         let query = doc! { "username": user.username.clone(), "activated": false };
         user.activated = true;
         user.registered = Option::from(Utc::now());
         user.last_login = Option::from(Utc::now());
-        user.in_room = first_room_id;
-        user.rooms_entered.push(user.in_room.unwrap());
+        user.in_room = Option::from(first_room_id);
+        user.rooms_entered.push(first_room_id);
         user.pin = Option::default();
         let modification = doc! {
             "$set": {
                 "activated": user.activated,
                 "registered": Utc::now().timestamp() as u32,
                 "last_login": Utc::now().timestamp() as u32,
-                "in_room": user.in_room.unwrap(),
+                "in_room": first_room_id,
                 "rooms_entered": &user.rooms_entered,
             },
             "$unset": {
                 "pin": 0 as u32,
             },
         };
-        let result = self
+        match self
             .get_users_coll()
             .update_one(query, modification, None)
-            .await;
-        match result {
+            .await
+        {
             Ok(_) => {
                 println!("Updated {}.", user.username);
             }
             Err(e) => {
                 println!("Error: update failed ({:?})", e);
+                return Err(MongoQueryError(e));
             }
         }
         Ok(())
