@@ -15,6 +15,10 @@ pub enum Error {
     MongoQueryError(mongodb::error::Error),
     #[error("could not access field in document: {0}")]
     MongoDataError(#[from] bson::document::ValueAccessError),
+    #[error("could not parse ObjectID {0}")]
+    BsonOidError(#[from] bson::oid::Error),
+    #[error("could not load file {0}")]
+    GridFSError(#[from] mongodb_gridfs::GridFSError),
     #[error("invalid id used: {0}")]
     InvalidIDError(String),
     #[error("unsafe password")]
@@ -23,8 +27,14 @@ pub enum Error {
     UserNotFoundError,
     #[error("username not available")]
     UsernameNotAvailableError,
+    #[error("combination of username and mail address is not valid")]
+    MalformedAddressError,
     #[error("mail address is not valid")]
     InvalidEmailError,
+    #[error("building mail failed")]
+    MailBuilderError,
+    #[error("sending mail failed")]
+    SmtpTransportError,
     #[error("user update failed")]
     UserUpdateError,
     #[error("riddle not found")]

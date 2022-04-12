@@ -42,11 +42,15 @@ pub struct Riddle {
     #[serde(default)]
     pub difficulty: u32,
     #[serde(default)]
+    pub deduction: Option<u32>,
+    #[serde(default)]
     pub level: u32,
     #[serde(default)]
     pub files: Option<Vec<UploadedFile>>,
     #[serde(default)]
     pub solution: String,
+    #[serde(default)]
+    pub debriefing: Option<String>,
     #[serde(default)]
     pub task: Option<String>,
     #[serde(default)]
@@ -127,7 +131,7 @@ impl User {
             hash: hash,
             pin: pin,
             activated: false,
-            created: Option::from(Utc::now()),
+            created: Some(Utc::now()),
             registered: Option::default(),
             last_login: Option::default(),
             solved: Vec::new(),
@@ -210,9 +214,15 @@ impl DB {
 
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
         println!("get_riddle_by_level(\"{}\")", level);
-        let coll = self.get_riddles_coll();
-        let result = coll.find_one(doc! { "level": level }, None).await.unwrap();
-        match result {
+        let riddle = match self
+            .get_riddles_coll()
+            .find_one(doc! { "level": level }, None)
+            .await
+        {
+            Ok(riddle) => riddle,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        match riddle {
             Some(riddle) => {
                 println!("Found {}", riddle.level);
                 Ok(Some(riddle))
@@ -224,11 +234,17 @@ impl DB {
         }
     }
 
-    pub async fn get_riddle_by_oid(&self, oid: ObjectId) -> Result<Option<Riddle>> {
+    pub async fn get_riddle_by_oid(&self, oid: &ObjectId) -> Result<Option<Riddle>> {
         println!("get_riddle_by_oid(\"{:?}\")", oid);
-        let coll = self.get_riddles_coll();
-        let result = coll.find_one(doc! { "_id": oid }, None).await.unwrap();
-        match result {
+        let riddle = match self
+            .get_riddles_coll()
+            .find_one(doc! { "_id": oid }, None)
+            .await
+        {
+            Ok(riddle) => riddle,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        match riddle {
             Some(riddle) => {
                 println!("Found {}", riddle.level);
                 Ok(Some(riddle))
@@ -238,6 +254,35 @@ impl DB {
                 Ok(Option::default())
             }
         }
+    }
+
+    pub async fn get_riddle_if_solved(
+        &self,
+        riddle_id: &ObjectId,
+        username: &String,
+    ) -> Result<Option<Riddle>> {
+        let user = match self
+            .get_users_coll()
+            .find_one(
+                doc! {
+                    "username": username,
+                    "solved": riddle_id,
+                },
+                None,
+            )
+            .await
+        {
+            Ok(user) => user,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        if user.is_none() {
+            return Ok(Option::default());
+        }
+        let riddle = match self.get_riddle_by_oid(riddle_id).await {
+            Ok(riddle) => riddle,
+            Err(e) => return Err(e),
+        };
+        Ok(riddle)
     }
 
     pub async fn is_riddle_accessible(
@@ -248,12 +293,8 @@ impl DB {
         // get the user associated with the request
         let user = match self.get_user(&username).await {
             Ok(user) => user,
-            Err(_) => {
-                return (
-                    Option::default(),
-                    Option::default(),
-                    Option::from("either username or password is wrong".to_string()),
-                );
+            Err(e) => {
+                return (Option::default(), Option::default(), Some(e.to_string()));
             }
         };
         // get the ID of the room the user is in
@@ -263,19 +304,15 @@ impl DB {
                 return (
                     Option::default(),
                     Option::default(),
-                    Option::from("User is nowhere. That should not have happened :-/".to_string()),
+                    Some("User is nowhere. That should not have happened :-/".to_string()),
                 );
             }
         };
         // get the room
         let room = match self.get_room(&in_room).await {
             Ok(room) => room,
-            Err(_) => {
-                return (
-                    Option::default(),
-                    Option::default(),
-                    Option::from("room not found".to_string()),
-                );
+            Err(e) => {
+                return (Option::default(), Option::default(), Some(e.to_string()));
             }
         };
         // Check if one of the doorways is associated with the requested riddle.
@@ -291,25 +328,24 @@ impl DB {
                 return (
                     Option::default(),
                     Option::default(),
-                    Option::from("doorway not accessible".to_string()),
+                    Some("doorway not accessible".to_string()),
                 );
             }
         };
-        (
-            Option::from(found.riddle_id),
-            Option::from(user),
-            Option::default(),
-        )
+        (Some(found.riddle_id), Some(user), Option::default())
     }
 
     pub async fn get_user(&self, username: &String) -> Result<User> {
         println!("get_user(\"{}\")", username);
-        let coll = self.get_users_coll();
-        let result = coll
+        let user = match self
+            .get_users_coll()
             .find_one(doc! { "username": username }, None)
             .await
-            .unwrap();
-        match result {
+        {
+            Ok(user) => user,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        match user {
             Some(user) => Ok(user),
             None => Err(UserNotFoundError),
         }
@@ -317,9 +353,15 @@ impl DB {
 
     pub async fn get_room(&self, oid: &ObjectId) -> Result<Room> {
         println!("get_room(\"{}\")", oid);
-        let coll = self.get_rooms_coll();
-        let result = coll.find_one(doc! { "_id": oid }, None).await.unwrap();
-        match result {
+        let room = match self
+            .get_rooms_coll()
+            .find_one(doc! { "_id": oid }, None)
+            .await
+        {
+            Ok(room) => room,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        match room {
             Some(room) => Ok(room),
             None => Err(RoomNotFoundError),
         }
@@ -357,14 +399,17 @@ impl DB {
 
     pub async fn get_user_with_pin(&self, username: &String, pin: PinType) -> Result<User> {
         println!("get_user_with_pin(\"{}\", \"{:06}\")", username, pin);
-        let coll = self.get_users_coll();
-        let result = coll
+        let result = match self
+            .get_users_coll()
             .find_one(
                 doc! { "username": username, "pin": pin, "activated": false },
                 None,
             )
             .await
-            .unwrap();
+        {
+            Ok(user) => user,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
         match result {
             Some(user) => {
                 println!("Found {} <{}>", user.username, user.email);
@@ -377,33 +422,43 @@ impl DB {
         }
     }
 
-    /*
-    pub async fn get_user_with_password(
-        &self,
-        username: &String,
-        password: &String,
-    ) -> Result<User> {
-        println!("get_user_with_password(\"{}\", \"{}\")", username, password);
-        let coll = self.get_users_coll();
-        let result = coll
-            .find_one(
-                doc! { "username": username, "password": password, "activated": false },
+    pub async fn set_user_solved(
+        &mut self,
+        solutions: &Vec<bson::oid::ObjectId>,
+        user: &User,
+    ) -> Result<()> {
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "_id": user.id, "activated": true },
+                doc! {
+                    "$set": { "solved": solutions, "level": user.level, "score": user.score },
+                },
                 None,
             )
             .await
-            .unwrap();
-        match result {
-            Some(user) => {
-                println!("Found {} <{}>", user.username, user.email);
-                Ok(user)
-            }
-            None => {
-                println!("user not found");
-                Err(UserNotFoundError)
-            }
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
         }
     }
-    */
+
+    pub async fn rewrite_user_score(&mut self, user: &User) -> Result<()> {
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "_id": user.id, "activated": true },
+                doc! {
+                    "$set": { "score": user.score },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
+    }
 
     pub async fn create_user(&mut self, user: &User) -> Result<()> {
         match self.get_users_coll().insert_one(user, None).await {
@@ -418,7 +473,7 @@ impl DB {
             .update_one(
                 doc! { "username": user.username.clone(), "activated": true },
                 doc! {
-                    "$set": { "last_login": Option::from(Utc::now().timestamp()) },
+                    "$set": { "last_login": Some(Utc::now().timestamp()) },
                 },
                 None,
             )
@@ -459,9 +514,9 @@ impl DB {
         };
         let query = doc! { "username": user.username.clone(), "activated": false };
         user.activated = true;
-        user.registered = Option::from(Utc::now());
-        user.last_login = Option::from(Utc::now());
-        user.in_room = Option::from(first_room_id);
+        user.registered = Some(Utc::now());
+        user.last_login = Some(Utc::now());
+        user.in_room = Some(first_room_id);
         user.rooms_entered.push(first_room_id);
         user.pin = Option::default();
         let modification = doc! {
