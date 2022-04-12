@@ -1,6 +1,6 @@
 [package]
 name = "labyrinth"
-version = "0.0.5"
+version = "0.0.6"
 edition = "2021"
 authors = ["Oliver Lau <oliver@ersatzworld.net>"]
 description = "Backend (REST API) for an escape room like web-based game"
@@ -8,6 +8,12 @@ keywords = ["gamedev"]
 
 [profile.dev]
 opt-level = 0
+lto = "off"
+incremental = true
+
+[profile.release]
+strip = true
+lto = true
 
 [dependencies]
 hyper = { version = ">= 0.14.17", features = ["full"] }
