@@ -79,6 +79,8 @@ pub struct Room {
     pub id: ObjectId,
     #[serde(default)]
     pub number: u32,
+    #[serde(default)]
+    pub coords: Option<String>,
     pub neighbors: Vec<Direction>,
     #[serde(default)]
     pub game_id: ObjectId,
