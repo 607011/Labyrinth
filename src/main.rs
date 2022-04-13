@@ -353,7 +353,10 @@ pub async fn riddle_solve_handler(
         "riddle_solve_handler called, oid = {}, solution = {}",
         riddle_id_str, solution
     );
-    let oid = ObjectId::parse_str(&riddle_id_str).unwrap();
+    let oid = match ObjectId::parse_str(&riddle_id_str) {
+        Ok(oid) => oid,
+        Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
+    };
     let (riddle_id, user, _msg) = db.is_riddle_accessible(&oid, &username).await;
     if riddle_id.is_none() {
         return Err(reject::custom(Error::RiddleNotFoundError));
@@ -527,12 +530,15 @@ pub async fn riddle_get_oid_handler(
 }
 
 pub async fn game_stats_handler(
-    game_id: String,
+    game_id_str: String,
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("game_stats_handler called, game_id = {}", game_id);
-    let game_id = ObjectId::parse_str(game_id).unwrap();
+    println!("game_stats_handler called, game_id = {}", game_id_str);
+    let game_id = match ObjectId::parse_str(game_id_str) {
+        Ok(oid) => oid,
+        Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
+    };
     let num_rooms = match db.get_num_rooms(&game_id).await {
         Ok(num_rooms) => num_rooms,
         Err(e) => return Err(reject::custom(e)),
