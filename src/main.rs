@@ -161,12 +161,9 @@ pub struct UserWhoamiResponse {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileVariantResponse {
-    pub ok: bool,
-    pub message: Option<String>,
     pub name: String,
     #[serde(with = "b64")]
     pub data: Vec<u8>,
-    #[serde(rename = "mimeType")]
     pub scale: Option<u32>,
 }
 
@@ -477,6 +474,26 @@ pub async fn riddle_get_oid_handler(
             while let Some(mut chunk) = cursor.next().await {
                 data.append(&mut chunk);
             }
+            let mut file_variants: Vec<FileVariantResponse> = Vec::new();
+            if let Some(variants) = &file.variants {
+                for variant in variants {
+                    let bucket =
+                        GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
+                    let mut cursor = match bucket.open_download_stream(variant.file_id).await {
+                        Ok(cursor) => cursor,
+                        Err(e) => return Err(reject::custom(Error::GridFSError(e))),
+                    };
+                    let mut data: Vec<u8> = Vec::new();
+                    while let Some(mut chunk) = cursor.next().await {
+                        data.append(&mut chunk);
+                    }
+                    file_variants.push(FileVariantResponse {
+                        name: variant.name.clone(),
+                        data: data,
+                        scale: Some(variant.scale),
+                    });
+                }
+            }
             found_files.push(FileResponse {
                 ok: true,
                 message: Option::default(),
@@ -487,7 +504,7 @@ pub async fn riddle_get_oid_handler(
                 scale: file.scale,
                 width: file.width,
                 height: file.height,
-                variants: Option::default(),
+                variants: Some(file_variants),
             })
         }
     }

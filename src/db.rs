@@ -17,8 +17,10 @@ pub type PinType = u32;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UploadedFileVariant {
+    #[serde(rename = "fileId")]
+    pub file_id: ObjectId,
     pub name: String,
-    pub scale: Option<u32>,
+    pub scale: u32,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
