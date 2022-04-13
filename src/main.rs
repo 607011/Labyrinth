@@ -369,7 +369,10 @@ pub async fn riddle_solve_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    let solved = riddle.solution.to_lowercase() == solution.to_lowercase();
+    let solved = match riddle.exact_match {
+        true => riddle.solution == solution,
+        false => riddle.solution.to_lowercase() == solution.to_lowercase(),
+    };
     let mut user = match user {
         Some(user) => user,
         None => return Err(reject::custom(Error::UserNotFoundError)),

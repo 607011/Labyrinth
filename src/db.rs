@@ -49,6 +49,8 @@ pub struct Riddle {
     pub level: u32,
     #[serde(default)]
     pub files: Option<Vec<UploadedFile>>,
+    #[serde(default="bool::default")]
+    pub exact_match: bool,
     #[serde(default)]
     pub solution: String,
     #[serde(default)]
