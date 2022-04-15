@@ -1,8 +1,9 @@
 .DS_Store
 Cargo.lock
-/target
+target/
 JWT_SECRET_KEY
 token.json
 credentials.json
 Pipfile.lock
 .env
+linux/

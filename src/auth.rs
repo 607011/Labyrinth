@@ -25,7 +25,7 @@ impl JwtSecretKey {
         JwtSecretKey { token: Vec::new() }
     }
     pub fn new_from_file(path: &str) -> JwtSecretKey {
-        let mut jwt = JwtSecretKey::new();
+        let mut jwt: JwtSecretKey = JwtSecretKey::new();
         jwt.read_key(path);
         jwt
     }
@@ -96,16 +96,16 @@ pub fn with_auth(role: Role) -> impl Filter<Extract = (String,), Error = Rejecti
 }
 
 pub fn create_jwt(uid: &str, role: &Role) -> Result<String> {
-    let expiration = Utc::now()
+    let expiration: i64 = Utc::now()
         .checked_add_signed(chrono::Duration::days(30))
         .expect("valid timestamp")
         .timestamp();
-    let claims = Claims {
+    let claims: Claims = Claims {
         sub: uid.to_owned(),
         role: role.to_string(),
         exp: expiration as usize,
     };
-    let header = Header::new(Algorithm::HS512);
+    let header: jsonwebtoken::Header = Header::new(Algorithm::HS512);
     encode(&header, &claims, &EncodingKey::from_secret(&JWT_KEY.token))
         .map_err(|_| Error::JWTTokenCreationError)
 }
@@ -131,11 +131,11 @@ async fn authorize((role, headers): (Role, HeaderMap<HeaderValue>)) -> WebResult
 }
 
 fn jwt_from_header(headers: &HeaderMap<HeaderValue>) -> Result<String> {
-    let header = match headers.get(AUTHORIZATION) {
+    let header: &warp::http::HeaderValue = match headers.get(AUTHORIZATION) {
         Some(v) => v,
         None => return Err(Error::NoAuthHeaderError),
     };
-    let auth_header = match std::str::from_utf8(header.as_bytes()) {
+    let auth_header: &str = match std::str::from_utf8(header.as_bytes()) {
         Ok(v) => v,
         Err(_) => return Err(Error::NoAuthHeaderError),
     };

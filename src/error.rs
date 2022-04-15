@@ -22,6 +22,8 @@ pub enum Error {
     #[error("invalid id used: {0}")]
     InvalidIDError(String),
     #[error("unsafe password")]
+    HashingError,
+    #[error("hashing error")]
     UnsafePasswordError,
     #[error("user not found")]
     UserNotFoundError,

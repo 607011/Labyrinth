@@ -49,8 +49,7 @@ pub struct Riddle {
     pub level: u32,
     #[serde(default)]
     pub files: Option<Vec<UploadedFile>>,
-    #[serde(default="bool::default")]
-    pub exact_match: bool,
+    pub ignore_case: Option<bool>,
     #[serde(default)]
     pub solution: String,
     #[serde(default)]
@@ -160,13 +159,16 @@ pub struct DB {
 
 impl DB {
     pub async fn init() -> Result<Self> {
-        let url = env::var("DB_URL").expect("DB_URL is not in .env file");
-        let name = env::var("DB_NAME").expect("DB_NAME is not in .env file");
-        let coll_users = env::var("DB_COLL_USERS").expect("DB_COLL_USERS is not in .env file");
-        let coll_riddles =
+        let url: String = env::var("DB_URL").expect("DB_URL is not in .env file");
+        let name: String = env::var("DB_NAME").expect("DB_NAME is not in .env file");
+        let coll_users: String =
+            env::var("DB_COLL_USERS").expect("DB_COLL_USERS is not in .env file");
+        let coll_riddles: String =
             env::var("DB_COLL_RIDDLES").expect("DB_COLL_RIDDLES is not in .env file");
-        let coll_rooms = env::var("DB_COLL_ROOMS").expect("DB_COLL_ROOMS is not in .env file");
-        let mut client_options = ClientOptions::parse(url).await.unwrap();
+        let coll_rooms: String =
+            env::var("DB_COLL_ROOMS").expect("DB_COLL_ROOMS is not in .env file");
+        let mut client_options: mongodb::options::ClientOptions =
+            ClientOptions::parse(url).await.unwrap();
         client_options.app_name = Some(name.to_string());
         Ok(Self {
             client: Client::with_options(client_options).unwrap(),
@@ -220,7 +222,7 @@ impl DB {
 
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
         println!("get_riddle_by_level(\"{}\")", level);
-        let riddle = match self
+        let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "level": level }, None)
             .await
@@ -242,7 +244,7 @@ impl DB {
 
     pub async fn get_riddle_by_oid(&self, oid: &ObjectId) -> Result<Option<Riddle>> {
         println!("get_riddle_by_oid(\"{:?}\")", oid);
-        let riddle = match self
+        let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "_id": oid }, None)
             .await
@@ -267,7 +269,7 @@ impl DB {
         riddle_id: &ObjectId,
         username: &String,
     ) -> Result<Option<Riddle>> {
-        let user = match self
+        let user: Option<User> = match self
             .get_users_coll()
             .find_one(
                 doc! {
@@ -284,7 +286,7 @@ impl DB {
         if user.is_none() {
             return Ok(Option::default());
         }
-        let riddle = match self.get_riddle_by_oid(riddle_id).await {
+        let riddle: Option<Riddle> = match self.get_riddle_by_oid(riddle_id).await {
             Ok(riddle) => riddle,
             Err(e) => return Err(e),
         };
@@ -297,14 +299,14 @@ impl DB {
         username: &String,
     ) -> (Option<ObjectId>, Option<User>, Option<String>) {
         // get the user associated with the request
-        let user = match self.get_user(&username).await {
+        let user: User = match self.get_user(&username).await {
             Ok(user) => user,
             Err(e) => {
                 return (Option::default(), Option::default(), Some(e.to_string()));
             }
         };
         // get the ID of the room the user is in
-        let in_room = match user.in_room {
+        let in_room: bson::oid::ObjectId = match user.in_room {
             Some(in_room) => in_room,
             None => {
                 return (
@@ -315,7 +317,7 @@ impl DB {
             }
         };
         // get the room
-        let room = match self.get_room(&in_room).await {
+        let room: Room = match self.get_room(&in_room).await {
             Ok(room) => room,
             Err(e) => {
                 return (Option::default(), Option::default(), Some(e.to_string()));
@@ -324,7 +326,7 @@ impl DB {
         // Check if one of the doorways is associated with the requested riddle.
         // This is to make sure, the user is not granted access to a riddle
         // they can't see from the current location (room).
-        let found = match room
+        let found: &Direction = match room
             .neighbors
             .iter()
             .find(|neighbor| neighbor.riddle_id == *oid)
@@ -343,7 +345,7 @@ impl DB {
 
     pub async fn get_user(&self, username: &String) -> Result<User> {
         println!("get_user(\"{}\")", username);
-        let user = match self
+        let user: Option<User> = match self
             .get_users_coll()
             .find_one(doc! { "username": username }, None)
             .await
@@ -359,7 +361,7 @@ impl DB {
 
     pub async fn get_room(&self, oid: &ObjectId) -> Result<Room> {
         println!("get_room(\"{}\")", oid);
-        let room = match self
+        let room: Option<Room> = match self
             .get_rooms_coll()
             .find_one(doc! { "_id": oid }, None)
             .await
@@ -379,7 +381,7 @@ impl DB {
         riddle_id: &bson::oid::ObjectId,
     ) -> Result<Room> {
         println!("get_room_behind(\"{}\", \"{}\")", opposite, riddle_id);
-        let result = self
+        let room: Option<Room> = match self
             .get_rooms_coll()
             .find_one(
                 doc! {
@@ -392,8 +394,8 @@ impl DB {
                 },
                 None,
             )
-            .await;
-        let room = match result {
+            .await
+        {
             Ok(room) => room,
             Err(e) => return Err(MongoQueryError(e)),
         };
@@ -405,7 +407,7 @@ impl DB {
 
     pub async fn get_user_with_pin(&self, username: &String, pin: PinType) -> Result<User> {
         println!("get_user_with_pin(\"{}\", \"{:06}\")", username, pin);
-        let result = match self
+        let result: Option<User> = match self
             .get_users_coll()
             .find_one(
                 doc! { "username": username, "pin": pin, "activated": false },
@@ -497,7 +499,7 @@ impl DB {
     }
 
     pub async fn activate_user(&mut self, user: &mut User) -> Result<()> {
-        let entrance = match self
+        let entrance: Option<Room> = match self
             .get_rooms_coll()
             .find_one(
                 doc! {
@@ -511,21 +513,21 @@ impl DB {
             Ok(entrance) => entrance,
             Err(e) => return Err(MongoQueryError(e)),
         };
-        let first_room_id = match entrance {
+        let first_room_id: bson::oid::ObjectId = match entrance {
             Some(room) => {
                 println!("Found room {}", room.id);
                 room.id
             }
             None => return Err(RoomNotFoundError),
         };
-        let query = doc! { "username": user.username.clone(), "activated": false };
+        let query: bson::Document = doc! { "username": user.username.clone(), "activated": false };
         user.activated = true;
         user.registered = Some(Utc::now());
         user.last_login = Some(Utc::now());
         user.in_room = Some(first_room_id);
         user.rooms_entered.push(first_room_id);
         user.pin = Option::default();
-        let modification = doc! {
+        let modification: bson::Document = doc! {
             "$set": {
                 "activated": user.activated,
                 "registered": Utc::now().timestamp() as u32,

@@ -7,7 +7,7 @@ use argon2::{self, Config, ThreadMode, Variant, Version};
 use auth::{with_auth, Role};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Direction, PinType, User, DB};
+use db::{with_db, Direction, PinType, Riddle, Room, User, DB};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -195,6 +195,7 @@ pub struct RiddleResponse {
     pub task: Option<String>,
     pub difficulty: u32,
     pub deduction: u32,
+    pub ignore_case: bool,
     pub credits: Option<String>,
 }
 
@@ -244,21 +245,22 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         "go_handler called, direction = {}, username = {}",
         direction_str, username
     );
-    let mut user = match db.get_user(&username).await {
+    let mut user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    if user.in_room.is_none() {
-        return Err(reject::custom(Error::UserIsInNoRoom));
-    }
-    let room = match db.get_room(&user.in_room.unwrap()).await {
+    let in_room = match &user.in_room {
+        Some(in_room) => in_room,
+        None => return Err(reject::custom(Error::UserIsInNoRoom)),
+    };
+    let room: Room = match db.get_room(&in_room).await {
         Ok(room) => {
             println!("current room: {}", room.id);
             room
         }
         Err(e) => return Err(reject::custom(e)),
     };
-    let direction = match room
+    let direction: &Direction = match room
         .neighbors
         .iter()
         .find(|&neighbor| neighbor.direction == direction_str)
@@ -272,12 +274,13 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         }
         None => return Err(reject::custom(Error::NeighborNotFoundError)),
     };
-    let riddle_id = match user.solved.iter().find(|&&s| s == direction.riddle_id) {
-        Some(riddle_id) => riddle_id,
-        None => return Err(reject::custom(Error::RiddleNotSolvedError)),
-    };
-    let opposite = &OPPOSITE[&direction.direction];
-    let room_behind = match db.get_room_behind(&opposite, &riddle_id).await {
+    let riddle_id: &bson::oid::ObjectId =
+        match user.solved.iter().find(|&&s| s == direction.riddle_id) {
+            Some(riddle_id) => riddle_id,
+            None => return Err(reject::custom(Error::RiddleNotSolvedError)),
+        };
+    let opposite: &String = &OPPOSITE[&direction.direction];
+    let room_behind: Room = match db.get_room_behind(&opposite, &riddle_id).await {
         Ok(room_behind) => room_behind,
         Err(e) => return Err(reject::custom(e)),
     };
@@ -288,7 +291,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
     );
     user.in_room = Some(room_behind.id);
     // TODO: move all code accessing the database to db.rs
-    let update_doc = match room.exit.is_some() && room.exit.unwrap() {
+    let update_doc: bson::Document = match room.exit.is_some() && room.exit.unwrap() {
         true => doc! {
             "$set": {
                 "in_room": user.in_room,
@@ -316,14 +319,18 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         Ok(_) => {}
         Err(e) => return Ok(err_response(Some(e.to_string()))),
     };
-    let room = match db.get_room(&user.in_room.unwrap()).await {
+    let in_room = match &user.in_room {
+        Some(in_room) => in_room,
+        None => return Err(reject::custom(Error::UserIsInNoRoom)),
+    };
+    let room: Room = match db.get_room(&in_room).await {
         Ok(room) => {
             println!("new room: {}", room.id);
             room
         }
         Err(e) => return Ok(err_response(Some(e.to_string()))),
     };
-    let reply = warp::reply::json(&json!(&SteppedThroughResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&SteppedThroughResponse {
         ok: true,
         message: Option::default(),
         room: RoomResponse {
@@ -338,8 +345,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
             neighbors: room.neighbors,
         },
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn riddle_solve_handler(
@@ -353,32 +359,33 @@ pub async fn riddle_solve_handler(
         "riddle_solve_handler called, oid = {}, solution = {}",
         riddle_id_str, solution
     );
-    let oid = match ObjectId::parse_str(&riddle_id_str) {
+    let oid: bson::oid::ObjectId = match ObjectId::parse_str(&riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
     let (riddle_id, user, _msg) = db.is_riddle_accessible(&oid, &username).await;
-    if riddle_id.is_none() {
-        return Err(reject::custom(Error::RiddleNotFoundError));
-    }
-    let riddle = match db.get_riddle_by_oid(&riddle_id.unwrap()).await {
+    let riddle_id = match riddle_id {
+        Some(in_room) => in_room,
+        None => return Err(reject::custom(Error::RiddleNotFoundError)),
+    };
+    let riddle: Option<Riddle> = match db.get_riddle_by_oid(&riddle_id).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
     };
-    let riddle = match riddle {
+    let riddle: Riddle = match riddle {
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    let solved = match riddle.exact_match {
-        true => riddle.solution == solution,
-        false => riddle.solution.to_lowercase() == solution.to_lowercase(),
+    let solved: bool = match riddle.ignore_case.unwrap_or(false) {
+        true => riddle.solution.to_lowercase() == solution.to_lowercase(),
+        false => riddle.solution == solution,
     };
-    let mut user = match user {
+    let mut user: User = match user {
         Some(user) => user,
         None => return Err(reject::custom(Error::UserNotFoundError)),
     };
     if solved {
-        let mut solutions = user.solved.clone();
+        let mut solutions: Vec<bson::oid::ObjectId> = user.solved.clone();
         solutions.push(riddle.id);
         user.level = riddle.level.max(user.level);
         user.score += riddle.difficulty;
@@ -403,7 +410,7 @@ pub async fn riddle_solve_handler(
             }
         }
     }
-    let reply = warp::reply::json(&json!(&RiddleSolvedResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleSolvedResponse {
         ok: true,
         riddle_id: riddle.id,
         solved: solved,
@@ -411,8 +418,7 @@ pub async fn riddle_solve_handler(
         level: riddle.level,
         message: Option::default(),
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn debriefing_get_by_riddle_id_handler(
@@ -424,26 +430,25 @@ pub async fn debriefing_get_by_riddle_id_handler(
         "debriefing_get_by_riddle_id_handler called, oid = {}",
         riddle_id_str
     );
-    let oid = match ObjectId::parse_str(riddle_id_str) {
+    let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let solved_riddle = match db.get_riddle_if_solved(&oid, &username).await {
+    let solved_riddle: Option<Riddle> = match db.get_riddle_if_solved(&oid, &username).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
     };
-    let riddle = match solved_riddle {
+    let riddle: Riddle = match solved_riddle {
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
     println!("got riddle {}", riddle.level);
-    let reply = warp::reply::json(&json!(&DebriefingResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&DebriefingResponse {
         ok: true,
         message: Option::default(),
         debriefing: riddle.debriefing,
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn riddle_get_oid_handler(
@@ -457,15 +462,15 @@ pub async fn riddle_get_oid_handler(
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
     let (riddle_id, _user, message) = db.is_riddle_accessible(&oid, &username).await;
-    let riddle_id = match riddle_id {
+    let riddle_id: bson::oid::ObjectId = match riddle_id {
         Some(riddle_id) => riddle_id,
         None => return Ok(err_response(message)),
     };
-    let riddle = match db.get_riddle_by_oid(&riddle_id).await {
+    let riddle: Option<Riddle> = match db.get_riddle_by_oid(&riddle_id).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
     };
-    let riddle = match riddle {
+    let riddle: Riddle = match riddle {
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
@@ -474,7 +479,8 @@ pub async fn riddle_get_oid_handler(
     if let Some(files) = riddle.files {
         for file in files.iter() {
             println!("trying to load file {:?}", file);
-            let bucket = GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
+            let bucket: mongodb_gridfs::GridFSBucket =
+                GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
             let mut cursor = match bucket.open_download_stream(file.file_id).await {
                 Ok(cursor) => cursor,
                 Err(e) => return Err(reject::custom(Error::GridFSError(e))),
@@ -517,19 +523,19 @@ pub async fn riddle_get_oid_handler(
             })
         }
     }
-    let reply = warp::reply::json(&json!(&RiddleResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
         ok: true,
         message: Option::default(),
         id: riddle.id,
         level: riddle.level,
         difficulty: riddle.difficulty,
         deduction: riddle.deduction.unwrap_or(0),
+        ignore_case: riddle.ignore_case.unwrap_or(false),
         files: Option::from(found_files),
         task: riddle.task,
         credits: riddle.credits,
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn game_stats_handler(
@@ -538,27 +544,26 @@ pub async fn game_stats_handler(
     db: DB,
 ) -> WebResult<impl Reply> {
     println!("game_stats_handler called, game_id = {}", game_id_str);
-    let game_id = match ObjectId::parse_str(game_id_str) {
+    let game_id: bson::oid::ObjectId = match ObjectId::parse_str(game_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let num_rooms = match db.get_num_rooms(&game_id).await {
+    let num_rooms: Option<u32> = match db.get_num_rooms(&game_id).await {
         Ok(num_rooms) => num_rooms,
         Err(e) => return Err(reject::custom(e)),
     };
-    let num_riddles = match db.get_num_riddles(&game_id).await {
+    let num_riddles: Option<u32> = match db.get_num_riddles(&game_id).await {
         Ok(num_riddles) => num_riddles,
         Err(e) => return Err(reject::custom(e)),
     };
-    let reply = warp::reply::json(&json!(&GameStatsResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&GameStatsResponse {
         ok: true,
         message: Option::default(),
-        num_rooms: num_rooms.unwrap(),
-        num_riddles: num_riddles.unwrap(), // TODO
-        max_score: 0,                      // TODO
+        num_rooms: num_rooms.unwrap_or(0),
+        num_riddles: num_riddles.unwrap_or(0), // TODO
+        max_score: 0,                          // TODO
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 // This function is needed for manual debugging.
@@ -568,11 +573,11 @@ pub async fn riddle_get_by_level_handler(
     db: DB,
 ) -> WebResult<impl Reply> {
     println!("riddle_get_by_level_handler called, level = {}", level);
-    let riddle = match db.get_riddle_by_level(level).await {
+    let riddle: Option<Riddle> = match db.get_riddle_by_level(level).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
     };
-    let riddle = match riddle {
+    let riddle: Riddle = match riddle {
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
@@ -604,19 +609,19 @@ pub async fn riddle_get_by_level_handler(
             });
         }
     }
-    let reply = warp::reply::json(&json!(&RiddleResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
         ok: true,
         message: Option::default(),
         id: riddle.id,
         level: riddle.level,
         difficulty: riddle.difficulty,
         deduction: riddle.deduction.unwrap_or(0),
+        ignore_case: riddle.ignore_case.unwrap_or(false),
         files: Option::from(found_files),
         task: riddle.task,
         credits: riddle.credits,
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn user_authentication_handler(username: String) -> WebResult<impl Reply> {
@@ -637,16 +642,16 @@ pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
 
 pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Reply> {
     println!("user_whoami_handler called, username = {}", username);
-    let user = match db.get_user(&username).await {
+    let user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
     println!("got user {} with email {}", user.username, user.email);
-    let in_room = match user.in_room {
+    let in_room: bson::oid::ObjectId = match user.in_room {
         Some(room) => room,
         None => return Err(reject::custom(Error::RoomNotFoundError)),
     };
-    let room_response = match db.get_room(&in_room).await {
+    let room_response: RoomResponse = match db.get_room(&in_room).await {
         Ok(room) => RoomResponse {
             ok: true,
             message: Option::default(),
@@ -660,7 +665,7 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         },
         Err(e) => return Err(reject::custom(e)),
     };
-    let reply = warp::reply::json(&json!(&UserWhoamiResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
         ok: true,
         message: Option::default(),
         username: user.username.clone(),
@@ -687,7 +692,10 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         Err(e) => return Err(reject::custom(e)),
     };
     println!("got user {}\nwith hash  = {}", user.username, user.hash);
-    let matches = argon2::verify_encoded(&user.hash, body.password.as_bytes()).unwrap();
+    let matches: bool = match argon2::verify_encoded(&user.hash, body.password.as_bytes()) {
+        Ok(matches) => matches,
+        Err(_) => return Err(reject::custom(Error::HashingError)),
+    };
     if !matches {
         return Err(reject::custom(Error::WrongCredentialsError));
     }
@@ -696,11 +704,15 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         Ok(()) => (),
         Err(e) => return Err(reject::custom(e)),
     }
-    let token_str = match auth::create_jwt(&user.username, &user.role) {
+    let token_str: String = match auth::create_jwt(&user.username, &user.role) {
         Ok(token_str) => token_str,
         Err(e) => return Err(reject::custom(e)),
     };
-    let room_response = match db.get_room(&user.in_room.unwrap()).await {
+    let in_room: bson::oid::ObjectId = match user.in_room {
+        Some(room) => room,
+        None => return Err(reject::custom(Error::RoomNotFoundError)),
+    };
+    let room_response: RoomResponse = match db.get_room(&in_room).await {
         Ok(room) => RoomResponse {
             ok: true,
             message: Option::default(),
@@ -714,7 +726,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         },
         Err(e) => return Err(reject::custom(e)),
     };
-    let reply = warp::reply::json(&json!(&UserWhoamiResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
         ok: true,
         message: Option::default(),
         username: user.username.clone(),
@@ -731,8 +743,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         rooms_entered: user.rooms_entered,
         jwt: Some(token_str),
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn user_activation_handler(
@@ -743,7 +754,7 @@ pub async fn user_activation_handler(
         "user_activation_handler called, username was: {}, pin was: {}",
         body.username, body.pin
     );
-    let mut user = match db.get_user_with_pin(&body.username, body.pin).await {
+    let mut user: User = match db.get_user_with_pin(&body.username, body.pin).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
@@ -751,11 +762,11 @@ pub async fn user_activation_handler(
         Ok(()) => (),
         Err(e) => return Err(reject::custom(e)),
     };
-    let token_str = match auth::create_jwt(&user.username, &user.role) {
+    let token_str: String = match auth::create_jwt(&user.username, &user.role) {
         Ok(token_str) => token_str,
         Err(e) => return Err(reject::custom(e)),
     };
-    let room_response = match db.get_room(&user.in_room.unwrap()).await {
+    let room_response: RoomResponse = match db.get_room(&user.in_room.unwrap()).await {
         Ok(room) => RoomResponse {
             ok: true,
             message: Option::default(),
@@ -769,7 +780,7 @@ pub async fn user_activation_handler(
         },
         Err(e) => return Err(reject::custom(e)),
     };
-    let reply = warp::reply::json(&json!(&UserWhoamiResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
         ok: true,
         message: Option::default(),
         username: user.username.clone(),
@@ -786,8 +797,7 @@ pub async fn user_activation_handler(
         rooms_entered: user.rooms_entered,
         jwt: Some(token_str),
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::OK);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn user_registration_handler(
@@ -807,7 +817,7 @@ pub async fn user_registration_handler(
     if db.get_user(&body.username).await.is_ok() {
         return Err(reject::custom(Error::UsernameNotAvailableError));
     }
-    let config = Config {
+    let config: argon2::Config = Config {
         variant: Variant::Argon2i,
         version: Version::Version13,
         mem_cost: 65536,
@@ -819,7 +829,10 @@ pub async fn user_registration_handler(
         hash_length: 32,
     };
     let salt: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
-    let hash = argon2::hash_encoded(body.password.as_bytes(), &salt, &config).unwrap();
+    let hash: String = match argon2::hash_encoded(body.password.as_bytes(), &salt, &config) {
+        Ok(hash) => hash,
+        Err(_) => return Err(reject::custom(Error::HashingError)),
+    };
     let mut pin: PinType = 0;
     while pin == 0 {
         pin = OsRng.next_u32() % 1000000;
@@ -841,7 +854,7 @@ pub async fn user_registration_handler(
         Ok(to) => to,
         Err(_) => return Err(reject::custom(Error::MalformedAddressError)), // TODO: propagate info of `lettre::address::AddressError`
     };
-    let email = match Message::builder()
+    let email: lettre::Message = match Message::builder()
         .from(
             "Labyrinth Mailer <no-reply@ersatzworld.net>"
                 .parse()
@@ -869,7 +882,7 @@ Dein Labyrinth-Betreuer
         Ok(email) => email,
         Err(_) => return Err(reject::custom(Error::MailBuilderError)), // TODO: propagate info of `lettre::error::Error`
     };
-    let mailer = SmtpTransport::unencrypted_localhost();
+    let mailer: lettre::SmtpTransport = SmtpTransport::unencrypted_localhost();
     match mailer.send(&email) {
         Ok(_) => {
             println!(
@@ -879,12 +892,11 @@ Dein Labyrinth-Betreuer
         }
         Err(_) => return Err(reject::custom(Error::SmtpTransportError)), // TODO: propagate info of `lettre::transport::smtp::Error`
     }
-    let reply = warp::reply::json(&json!(&StatusResponse {
+    let reply: warp::reply::Json = warp::reply::json(&json!(&StatusResponse {
         ok: true,
         message: Option::default(),
     }));
-    let reply = warp::reply::with_status(reply, StatusCode::CREATED);
-    Ok(reply)
+    Ok(warp::reply::with_status(reply, StatusCode::CREATED))
 }
 
 #[tokio::main]
