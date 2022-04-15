@@ -7,7 +7,7 @@ use argon2::{self, Config, ThreadMode, Variant, Version};
 use auth::{with_auth, Role};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Direction, PinType, Riddle, Room, User, DB};
+use db::{with_db, Base32String, Direction, PinType, Riddle, Room, User, DB};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -159,6 +159,8 @@ pub struct UserWhoamiResponse {
     pub solved: Vec<ObjectId>,
     pub rooms_entered: Vec<ObjectId>,
     pub jwt: Option<String>,
+    pub totp_key: Option<Base32String>,
+    pub recovery_keys: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -681,6 +683,8 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Option::default(),
+        totp_key: Option::default(),
+        recovery_keys: Option::default(),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -742,6 +746,8 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Some(token_str),
+        totp_key: Option::default(),
+        recovery_keys: Option::default(),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -796,6 +802,8 @@ pub async fn user_activation_handler(
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Some(token_str),
+        totp_key: Option::default(),
+        recovery_keys: Some(user.recovery_keys),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }

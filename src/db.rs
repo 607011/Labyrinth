@@ -8,12 +8,14 @@ use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use mongodb::bson::doc;
 use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
+use rand::{distributions::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::env;
 use warp::Filter;
 
 pub type PinType = u32;
+pub type Base32String = String;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UploadedFileVariant {
@@ -118,6 +120,10 @@ pub struct User {
     #[serde(default)]
     pub score: u32,
     pub in_room: Option<ObjectId>,
+    #[serde(default)]
+    pub totp_key: Option<Base32String>,
+    #[serde(default)]
+    pub recovery_keys: Vec<String>,
 }
 
 impl User {
@@ -144,6 +150,21 @@ impl User {
             level: 0,
             score: 0,
             in_room: Option::default(),
+            totp_key: Option::default(),
+            recovery_keys: Vec::new(),
+        }
+    }
+}
+
+pub struct KeyChars;
+
+impl Distribution<u8> for KeyChars {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> u8 {
+        const RANGE: usize = 25 + 10;
+        const GEN_ASCII_STR_CHARSET: &[u8; RANGE] = b"abcdefghijkmnopqrstuvwxyz0123456789";
+        loop {
+            let idx: usize = rng.next_u32() as usize % RANGE;
+            return GEN_ASCII_STR_CHARSET[idx];
         }
     }
 }
@@ -527,6 +548,31 @@ impl DB {
         user.in_room = Some(first_room_id);
         user.rooms_entered.push(first_room_id);
         user.pin = Option::default();
+        user.recovery_keys = (0..10)
+            .map(|_| {
+                let a: String = rand::thread_rng()
+                    .sample_iter(&KeyChars)
+                    .take(4)
+                    .map(char::from)
+                    .collect();
+                let b: String = rand::thread_rng()
+                    .sample_iter(&KeyChars)
+                    .take(4)
+                    .map(char::from)
+                    .collect();
+                let c: String = rand::thread_rng()
+                    .sample_iter(&KeyChars)
+                    .take(4)
+                    .map(char::from)
+                    .collect();
+                let d: String = rand::thread_rng()
+                    .sample_iter(&KeyChars)
+                    .take(4)
+                    .map(char::from)
+                    .collect();
+                a + "-" + &b + "-" + &c + "-" + &d
+            })
+            .collect();
         let modification: bson::Document = doc! {
             "$set": {
                 "activated": user.activated,
@@ -534,6 +580,8 @@ impl DB {
                 "last_login": Utc::now().timestamp() as u32,
                 "in_room": first_room_id,
                 "rooms_entered": &user.rooms_entered,
+                "totp_key": null,
+                "recovery_keys": &user.recovery_keys,
             },
             "$unset": {
                 "pin": 0 as u32,
