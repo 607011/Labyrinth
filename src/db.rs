@@ -2,7 +2,7 @@
  * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
  * All rights reserved.
  */
-use crate::{auth::Role, error::Error::*, Result};
+use crate::{auth::Role, b64, error::Error::*, Result};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use mongodb::bson::doc;
@@ -15,7 +15,6 @@ use std::env;
 use warp::Filter;
 
 pub type PinType = u32;
-pub type Base32String = String;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UploadedFileVariant {
@@ -120,8 +119,8 @@ pub struct User {
     #[serde(default)]
     pub score: u32,
     pub in_room: Option<ObjectId>,
-    #[serde(default)]
-    pub totp_key: Option<Base32String>,
+    #[serde(with = "b64")]
+    pub totp_key: Vec<u8>,
     #[serde(default)]
     pub recovery_keys: Vec<String>,
 }
@@ -150,7 +149,7 @@ impl User {
             level: 0,
             score: 0,
             in_room: Option::default(),
-            totp_key: Option::default(),
+            totp_key: Vec::new(),
             recovery_keys: Vec::new(),
         }
     }
@@ -381,7 +380,7 @@ impl DB {
     }
 
     pub async fn get_room(&self, oid: &ObjectId) -> Result<Room> {
-        println!("get_room(\"{}\")", oid);
+        println!("get_room({})", oid);
         let room: Option<Room> = match self
             .get_rooms_coll()
             .find_one(doc! { "_id": oid }, None)
@@ -573,6 +572,7 @@ impl DB {
                 a + "-" + &b + "-" + &c + "-" + &d
             })
             .collect();
+        user.totp_key = rand::thread_rng().gen::<[u8; 32]>().to_vec();
         let modification: bson::Document = doc! {
             "$set": {
                 "activated": user.activated,
@@ -580,7 +580,7 @@ impl DB {
                 "last_login": Utc::now().timestamp() as u32,
                 "in_room": first_room_id,
                 "rooms_entered": &user.rooms_entered,
-                "totp_key": null,
+                "totp_key": base64::encode(&user.totp_key),
                 "recovery_keys": &user.recovery_keys,
             },
             "$unset": {

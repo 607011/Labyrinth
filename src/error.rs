@@ -25,6 +25,10 @@ pub enum Error {
     HashingError,
     #[error("hashing error")]
     UnsafePasswordError,
+    #[error("TOTP key missing error")]
+    TotpKeyMissingError,
+    #[error("TOTP QR code generation error")]
+    TotpQrCodeGenerationError,
     #[error("user not found")]
     UserNotFoundError,
     #[error("username not available")]

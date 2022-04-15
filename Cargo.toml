@@ -39,6 +39,8 @@ rust-argon2 = ">= 1.0"
 rand = ">= 0.8.5"
 url-escape = ">= 0.1.1"
 regex = ">= 1.5.5"
+qrcode-generator = ">= 4.1.4"
+totp-lite = ">= 1.0.3"
 
 [dependencies.mongodb]
 version = ">= 2.1.0"

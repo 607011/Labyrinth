@@ -5,15 +5,17 @@
 use crate::error::Error;
 use argon2::{self, Config, ThreadMode, Variant, Version};
 use auth::{with_auth, Role};
+use base32;
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Base32String, Direction, PinType, Riddle, Room, User, DB};
+use db::{with_db, Direction, PinType, Riddle, Room, User, DB};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
 use mongodb::bson::doc;
 use mongodb_gridfs::{options::GridFSBucketOptions, GridFSBucket};
+use qrcode_generator::QrCodeEcc;
 use rand;
 use rand_core::{OsRng, RngCore};
 use regex::Regex;
@@ -24,6 +26,8 @@ use std::convert::From;
 use std::env;
 use std::io::Read;
 use std::net::SocketAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
+use totp_lite::{totp_custom, Sha1};
 use url_escape;
 use warp::{http::StatusCode, reject, reply::WithStatus, Filter, Rejection, Reply};
 
@@ -102,6 +106,7 @@ pub struct UserActivationRequest {
 pub struct UserLoginRequest {
     pub username: String,
     pub password: String,
+    pub totp: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -159,7 +164,8 @@ pub struct UserWhoamiResponse {
     pub solved: Vec<ObjectId>,
     pub rooms_entered: Vec<ObjectId>,
     pub jwt: Option<String>,
-    pub totp_key: Option<Base32String>,
+    #[serde(with = "b64")]
+    pub totp_qrcode: Vec<u8>,
     pub recovery_keys: Option<Vec<String>>,
 }
 
@@ -683,7 +689,7 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Option::default(),
-        totp_key: Option::default(),
+        totp_qrcode: Vec::new(),
         recovery_keys: Option::default(),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
@@ -691,7 +697,7 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
 
 pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
     println!("user_login_handler called, username = {}", body.username);
-    let user = match db.get_user(&body.username).await {
+    let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
@@ -704,6 +710,15 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         return Err(reject::custom(Error::WrongCredentialsError));
     }
     println!("Hashes match. User is verified.");
+    let seconds: u64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let totp: String = totp_custom::<Sha1>(30, 6, &user.totp_key, seconds);
+    match totp == body.totp {
+        true => println!("TOTPs match"),
+        false => return Err(reject::custom(Error::WrongCredentialsError)),
+    }
     match db.login_user(&user).await {
         Ok(()) => (),
         Err(e) => return Err(reject::custom(e)),
@@ -746,7 +761,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Some(token_str),
-        totp_key: Option::default(),
+        totp_qrcode: Vec::new(),
         recovery_keys: Option::default(),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
@@ -786,6 +801,24 @@ pub async fn user_activation_handler(
         },
         Err(e) => return Err(reject::custom(e)),
     };
+    let b32_otp_secret: String =
+        base32::encode(base32::Alphabet::RFC4648 { padding: false }, &user.totp_key);
+    let otp_str = format!(
+        "otpauth://totp/{}: {}?secret={}&issuer={}",
+        env!("CARGO_PKG_NAME"),
+        user.username,
+        b32_otp_secret,
+        env!("CARGO_PKG_NAME"),
+    );
+    println!("{}", otp_str);
+    let totp_qrcode: Vec<u8> =
+        match qrcode_generator::to_png_to_vec(&otp_str, QrCodeEcc::Medium, 256) {
+            Ok(code) => code,
+            Err(e) => {
+                println!("{:?}", e);
+                return Err(reject::custom(Error::TotpQrCodeGenerationError));
+            }
+        };
     let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
         ok: true,
         message: Option::default(),
@@ -802,7 +835,7 @@ pub async fn user_activation_handler(
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Some(token_str),
-        totp_key: Option::default(),
+        totp_qrcode: totp_qrcode,
         recovery_keys: Some(user.recovery_keys),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
@@ -822,8 +855,13 @@ pub async fn user_registration_handler(
     if !RE_MAIL.is_match(body.email.as_str()) {
         return Err(reject::custom(Error::InvalidEmailError));
     }
-    if db.get_user(&body.username).await.is_ok() {
-        return Err(reject::custom(Error::UsernameNotAvailableError));
+    match db.get_user(&body.username).await {
+        Ok(_) => return Err(reject::custom(Error::UsernameNotAvailableError)),
+        Err(Error::UserNotFoundError) => (),
+        Err(e) => {
+            println!("{}", e);
+            return Err(reject::custom(e));
+        }
     }
     let config: argon2::Config = Config {
         variant: Variant::Argon2i,
