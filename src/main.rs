@@ -826,7 +826,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
             true => println!("TOTPs match"),
             false => return Err(reject::custom(Error::WrongCredentialsError)),
         }
-    } else if user.second_factors.contains(&SecondFactor::U2f) {
+    } else if user.second_factors.contains(&SecondFactor::Fido2) {
         // TODO
     }
     match db.login_user(&user).await {

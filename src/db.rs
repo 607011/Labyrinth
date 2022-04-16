@@ -96,14 +96,14 @@ pub struct Room {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SecondFactor {
     Totp,
-    U2f,
+    Fido2,
 }
 
 impl SecondFactor {
     pub fn from_str(factor: &str) -> SecondFactor {
         match factor {
             "TOTP" => SecondFactor::Totp,
-            "U2F" => SecondFactor::U2f,
+            "FIDO2" => SecondFactor::Fido2,
             _ => SecondFactor::Totp,
         }
     }
@@ -113,7 +113,7 @@ impl fmt::Display for SecondFactor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SecondFactor::Totp => write!(f, "TOTP"),
-            SecondFactor::U2f => write!(f, "U2F"),
+            SecondFactor::Fido2 => write!(f, "FIDO2"),
         }
     }
 }
