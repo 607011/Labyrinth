@@ -12,6 +12,7 @@ use rand::{distributions::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::env;
+use std::fmt;
 use warp::Filter;
 
 pub type PinType = u32;
@@ -92,6 +93,31 @@ pub struct Room {
     pub exit: Option<bool>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum SecondFactor {
+    Totp,
+    U2f,
+}
+
+impl SecondFactor {
+    pub fn from_str(factor: &str) -> SecondFactor {
+        match factor {
+            "TOTP" => SecondFactor::Totp,
+            "U2F" => SecondFactor::U2f,
+            _ => SecondFactor::Totp,
+        }
+    }
+}
+
+impl fmt::Display for SecondFactor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SecondFactor::Totp => write!(f, "TOTP"),
+            SecondFactor::U2f => write!(f, "U2F"),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct User {
     #[serde(rename = "_id")]
@@ -119,6 +145,11 @@ pub struct User {
     #[serde(default)]
     pub score: u32,
     pub in_room: Option<ObjectId>,
+    #[serde(default)]
+    pub awaiting_second_factor: bool,
+    #[serde(default)]
+    pub second_factors: Vec<SecondFactor>,
+    #[serde(default)]
     #[serde(with = "b64")]
     pub totp_key: Vec<u8>,
     #[serde(default)]
@@ -149,6 +180,8 @@ impl User {
             level: 0,
             score: 0,
             in_room: Option::default(),
+            awaiting_second_factor: false,
+            second_factors: Vec::new(),
             totp_key: Vec::new(),
             recovery_keys: Vec::new(),
         }
@@ -471,6 +504,23 @@ impl DB {
         }
     }
 
+    pub async fn set_user_awaiting_2fa(&mut self, user: &User) -> Result<()> {
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "_id": user.id, "activated": true },
+                doc! {
+                    "$set": { "awaiting_second_factor": true },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
+    }
+
     pub async fn rewrite_user_score(&mut self, user: &User) -> Result<()> {
         match self
             .get_users_coll()
@@ -501,7 +551,10 @@ impl DB {
             .update_one(
                 doc! { "username": user.username.clone(), "activated": true },
                 doc! {
-                    "$set": { "last_login": Some(Utc::now().timestamp()) },
+                    "$set": {
+                        "last_login": Some(Utc::now().timestamp()),
+                        "awaiting_second_factor": false
+                    },
                 },
                 None,
             )
@@ -582,6 +635,7 @@ impl DB {
                 "rooms_entered": &user.rooms_entered,
                 "totp_key": base64::encode(&user.totp_key),
                 "recovery_keys": &user.recovery_keys,
+                "second_factors": bson::to_bson(&vec!([SecondFactor::Totp])).unwrap(),
             },
             "$unset": {
                 "pin": 0 as u32,

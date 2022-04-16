@@ -8,7 +8,7 @@ use auth::{with_auth, Role};
 use base32;
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Direction, PinType, Riddle, Room, User, DB};
+use db::{with_db, Direction, PinType, Riddle, Room, SecondFactor, User, DB};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -102,10 +102,17 @@ pub struct UserActivationRequest {
     pub pin: PinType,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct UserLoginRequest {
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub totp: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct UserTotpRequest {
+    pub username: String,
     pub totp: String,
 }
 
@@ -238,6 +245,13 @@ pub struct GameStatsResponse {
     pub num_rooms: u32,
     pub num_riddles: u32,
     pub max_score: u32,
+}
+
+#[derive(Serialize, Debug)]
+struct SecondFactorRequiredResponse {
+    pub ok: bool,
+    pub message: String,
+    pub second_factors: Vec<SecondFactor>,
 }
 
 fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
@@ -648,6 +662,12 @@ pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
     Ok(StatusCode::PAYMENT_REQUIRED)
 }
 
+/*
+pub async fn webauthn_register_handler(username: String, db: DB) -> WebResult<impl Reply> {}
+
+pub async fn webauthn_finish_handler(username: String, db: DB) -> WebResult<impl Reply> {}
+*/
+
 pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Reply> {
     println!("user_whoami_handler called, username = {}", username);
     let user: User = match db.get_user(&username).await {
@@ -695,13 +715,84 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
+pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<impl Reply> {
+    println!(
+        "user_totp_handler called, username = {}, totp = {}",
+        body.username, body.totp
+    );
+    let user: User = match db.get_user(&body.username).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    println!("got user: {:?}", user);
+    if !user.awaiting_second_factor {
+        return Err(reject::custom(Error::PointlessTotpError));
+    }
+    if user.totp_key.len() > 0 && user.second_factors.contains(&SecondFactor::Totp) {
+        let seconds: u64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        match body.totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
+            true => println!("TOTPs match"),
+            false => return Err(reject::custom(Error::WrongCredentialsError)),
+        }
+    }
+    match db.login_user(&user).await {
+        Ok(()) => (),
+        Err(e) => return Err(reject::custom(e)),
+    }
+    let token_str: String = match auth::create_jwt(&user.username, &user.role) {
+        Ok(token_str) => token_str,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let in_room: bson::oid::ObjectId = match user.in_room {
+        Some(room) => room,
+        None => return Err(reject::custom(Error::RoomNotFoundError)),
+    };
+    let room_response: RoomResponse = match db.get_room(&in_room).await {
+        Ok(room) => RoomResponse {
+            ok: true,
+            message: Option::default(),
+            id: room.id,
+            number: room.number,
+            coords: room.coords,
+            neighbors: room.neighbors,
+            game_id: room.game_id,
+            entry: room.entry,
+            exit: room.exit,
+        },
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
+        ok: true,
+        message: Option::default(),
+        username: user.username.clone(),
+        email: user.email.clone(),
+        role: user.role.clone(),
+        activated: user.activated,
+        created: user.created,
+        registered: user.registered,
+        last_login: user.last_login,
+        level: user.level,
+        score: user.score,
+        in_room: room_response,
+        solved: user.solved,
+        rooms_entered: user.rooms_entered,
+        jwt: Some(token_str),
+        totp_qrcode: Vec::new(),
+        recovery_keys: Option::default(),
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
 pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
     println!("user_login_handler called, username = {}", body.username);
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user {}\nwith hash  = {}", user.username, user.hash);
+    println!("got user: {:?}", user);
     let matches: bool = match argon2::verify_encoded(&user.hash, body.password.as_bytes()) {
         Ok(matches) => matches,
         Err(_) => return Err(reject::custom(Error::HashingError)),
@@ -710,14 +801,33 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         return Err(reject::custom(Error::WrongCredentialsError));
     }
     println!("Hashes match. User is verified.");
-    let seconds: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let totp: String = totp_custom::<Sha1>(30, 6, &user.totp_key, seconds);
-    match totp == body.totp {
-        true => println!("TOTPs match"),
-        false => return Err(reject::custom(Error::WrongCredentialsError)),
+    if user.totp_key.len() > 0 && user.second_factors.contains(&SecondFactor::Totp) {
+        let totp: String = match body.totp {
+            Some(totp) => totp,
+            None => {
+                match db.set_user_awaiting_2fa(&user).await {
+                    Ok(()) => (),
+                    Err(e) => return Err(reject::custom(e)),
+                }
+                let reply: warp::reply::Json =
+                    warp::reply::json(&json!(&SecondFactorRequiredResponse {
+                        ok: false,
+                        message: "2FA required".to_string(),
+                        second_factors: Vec::from([SecondFactor::Totp]),
+                    }));
+                return Ok(warp::reply::with_status(reply, StatusCode::OK));
+            }
+        };
+        let seconds: u64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        match totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
+            true => println!("TOTPs match"),
+            false => return Err(reject::custom(Error::WrongCredentialsError)),
+        }
+    } else if user.second_factors.contains(&SecondFactor::U2f) {
+        // TODO
     }
     match db.login_user(&user).await {
         Ok(()) => (),
@@ -967,7 +1077,24 @@ async fn main() -> Result<()> {
         .and(warp::body::json())
         .and(with_db(db.clone()))
         .and_then(user_login_handler);
+    let user_totp_route = warp::path!("user" / "totp")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_db(db.clone()))
+        .and_then(user_totp_handler);
     /* Routes accessible only to authorized users */
+    /*
+    let webauthn_register_route = warp::path!("user" / "webauthn" / "register")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(webauthn_register_handler);
+    let webauthn_finish_route = warp::path!("user" / "webauthn" / "finish")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(webauthn_finish_handler);
+    */
     let user_auth_route = warp::path!("user" / "auth")
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -1022,8 +1149,11 @@ async fn main() -> Result<()> {
         .or(user_whoami_route)
         .or(user_auth_route)
         .or(user_login_route)
+        .or(user_totp_route)
         .or(user_register_route)
         .or(user_activation_route)
+        //.or(webauthn_register_route)
+        //.or(webauthn_finish_route)
         .or(ping_route)
         .or(cheat_route)
         .or(game_stats_route)

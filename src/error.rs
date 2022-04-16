@@ -57,6 +57,10 @@ pub enum Error {
     RiddleNotSolvedError,
     #[error("wrong credentials")]
     WrongCredentialsError,
+    #[error("pointless TOTP")]
+    PointlessTotpError,
+    #[error("TOTP missing")]
+    TotpMissingError,
     #[error("jwt token not valid")]
     JWTTokenError,
     #[error("jwt token creation error")]
