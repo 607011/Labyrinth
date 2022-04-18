@@ -1022,13 +1022,13 @@ pub async fn user_registration_handler(
         .body(format!(
             r#"Moin {}!
 
-Du hast dich erfolgreich bei Labyrinth rrgistriert.
+Du hast dich erfolgreich bei Labyrinth registriert.
 
 Deine PIN zur Aktivierung des Accounts: {:06}
 
 Bitte gib diese PIN auf der Labyrinth-Website ein.
 
-Viele Grüße,,
+Viele Grüße,
 Dein Labyrinth-Betreuer
 
 
