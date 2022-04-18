@@ -1011,6 +1011,7 @@ pub async fn user_registration_handler(
         Err(_) => return Err(reject::custom(Error::MalformedAddressError)), // TODO: propagate info of `lettre::address::AddressError`
     };
     let email: lettre::Message = match Message::builder()
+        .header(lettre::message::header::ContentType::TEXT_PLAIN)
         .from(
             "Labyrinth Mailer <no-reply@ersatzworld.net>"
                 .parse()
