@@ -42,9 +42,16 @@ type Result<T> = std::result::Result<T, error::Error>;
 type WebResult<T> = std::result::Result<T, Rejection>;
 type OidString = String;
 
-const RP_ID: &str = "localhost";
-const RP_NAME: &str = "Labyrinth";
-const RP_ORIGIN: &str = "http://localhost:8080";
+pub fn webauthn_default_config() -> webauthn::WebauthnVolatileConfig {
+    let rp_name: String =
+        env::var("RP_NAME").expect("environment variable RP_NAME has not been set");
+    let rp_origin: String =
+        env::var("RP_ORIGIN").expect("environment variable RP_ORIGIN has not been set");
+    let rp_id: String = env::var("RP_ID").expect("environment variable RP_ID has not been set");
+    let wa_config =
+        webauthn::WebauthnVolatileConfig::new(&rp_name, &rp_origin, &rp_id, Option::default());
+    wa_config
+}
 
 lazy_static! {
     static ref BAD_HASHES: Vec<Vec<u8>> = {
@@ -1063,9 +1070,7 @@ pub async fn webauthn_register_start_handler(
         Err(e) => return Err(reject::custom(e)),
     };
     println!("got user {:?}", user);
-    let wa_config =
-        webauthn::WebauthnVolatileConfig::new(RP_NAME, RP_ORIGIN, RP_ID, Option::default());
-    let wa_actor = webauthn::WebauthnActor::new(wa_config);
+    let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let ccr = match wa_actor.challenge_register(&mut db, &username).await {
         Ok(ccr) => ccr,
         Err(_) => return Err(reject::custom(Error::WebauthnError)),
@@ -1086,9 +1091,7 @@ pub async fn webauthn_register_finish_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     println!("webauthn_register_finish_handler() {:?}", &body);
-    let wa_config =
-        webauthn::WebauthnVolatileConfig::new(RP_NAME, RP_ORIGIN, RP_ID, Option::default());
-    let wa_actor = webauthn::WebauthnActor::new(wa_config);
+    let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let r = match wa_actor.register(&mut db, &username, &body).await {
         Ok(r) => r,
         Err(_) => return Err(reject::custom(Error::WebauthnError)),
