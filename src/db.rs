@@ -10,7 +10,6 @@ use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
 use rand::{distributions::Distribution, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::convert::Infallible;
 use std::env;
 use std::fmt;

@@ -30,10 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use totp_lite::{totp_custom, Sha1};
 use url_escape;
 use warp::{http::StatusCode, reject, reply::WithStatus, Filter, Rejection, Reply};
-use webauthn_rs::base64_data::Base64UrlSafeData;
-use webauthn_rs::proto::{
-    AuthenticatorAttestationResponseRaw, CreationChallengeResponse, RegisterPublicKeyCredential,
-};
+use webauthn_rs::proto::{CreationChallengeResponse, RegisterPublicKeyCredential};
 
 mod auth;
 mod b64;

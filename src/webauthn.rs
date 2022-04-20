@@ -1,13 +1,10 @@
-use std::collections::HashSet;
 use url::Url;
 use webauthn_rs::error::WebauthnError;
 use webauthn_rs::proto::{
     AttestationConveyancePreference, AuthenticatorAttachment, COSEAlgorithm,
-    CreationChallengeResponse, Credential, CredentialID, PublicKeyCredential,
-    RegisterPublicKeyCredential, RequestAuthenticationExtensions, RequestChallengeResponse,
-    RequestRegistrationExtensions, UserId,
+    CreationChallengeResponse, Credential, CredentialID, RegisterPublicKeyCredential,
 };
-use webauthn_rs::{AuthenticationState, RegistrationState, Webauthn, WebauthnConfig};
+use webauthn_rs::{Webauthn, WebauthnConfig};
 
 type WebauthnResult<T> = core::result::Result<T, WebauthnError>;
 
