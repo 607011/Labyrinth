@@ -30,15 +30,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use totp_lite::{totp_custom, Sha1};
 use url_escape;
 use warp::{http::StatusCode, reject, reply::WithStatus, Filter, Rejection, Reply};
+use webauthn_rs::base64_data::Base64UrlSafeData;
+use webauthn_rs::proto::{
+    AuthenticatorAttestationResponseRaw, CreationChallengeResponse, RegisterPublicKeyCredential,
+};
 
 mod auth;
 mod b64;
 mod db;
 mod error;
+mod webauthn;
 
 type Result<T> = std::result::Result<T, error::Error>;
 type WebResult<T> = std::result::Result<T, Rejection>;
 type OidString = String;
+
+const RP_ID: &str = "localhost";
+const RP_NAME: &str = "Labyrinth";
+const RP_ORIGIN: &str = "http://localhost:8080";
 
 lazy_static! {
     static ref BAD_HASHES: Vec<Vec<u8>> = {
@@ -88,6 +97,8 @@ pub struct UserRegistrationRequest {
     pub password: String,
     #[serde(default)]
     pub locale: String,
+    #[serde(rename = "secondFactorMethod")]
+    pub second_factor: SecondFactor,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -248,10 +259,28 @@ pub struct GameStatsResponse {
 }
 
 #[derive(Serialize, Debug)]
-struct SecondFactorRequiredResponse {
+pub struct SecondFactorRequiredResponse {
     pub ok: bool,
     pub message: String,
     pub second_factors: Vec<SecondFactor>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct WebAuthnRegisterStartRequest {
+    pub username: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct WebAuthnRegisterFinishResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+struct WebAuthnRegisterStartResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub ccr: CreationChallengeResponse,
 }
 
 fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
@@ -263,10 +292,7 @@ fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
 }
 
 pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebResult<impl Reply> {
-    println!(
-        "go_handler called, direction = {}, username = {}",
-        direction_str, username
-    );
+    println!("go_handler() {} {}", &direction_str, &username);
     let mut user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
@@ -277,7 +303,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
     };
     let room: Room = match db.get_room(&in_room).await {
         Ok(room) => {
-            println!("current room: {}", room.id);
+            dbg!(room.id);
             room
         }
         Err(e) => return Err(reject::custom(e)),
@@ -288,10 +314,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         .find(|&neighbor| neighbor.direction == direction_str)
     {
         Some(direction) => {
-            println!(
-                "riddle in direction {}: {}",
-                direction_str, direction.riddle_id
-            );
+            dbg!(&direction_str, &direction.riddle_id);
             direction
         }
         None => return Err(reject::custom(Error::NeighborNotFoundError)),
@@ -307,7 +330,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         Err(e) => return Err(reject::custom(e)),
     };
     println!(
-        "moving from room {} to {}",
+        "moving from {} to {}",
         &user.in_room.unwrap(),
         &room_behind.id
     );
@@ -347,7 +370,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
     };
     let room: Room = match db.get_room(&in_room).await {
         Ok(room) => {
-            println!("new room: {}", room.id);
+            println!("new room {}", room.id);
             room
         }
         Err(e) => return Ok(err_response(Some(e.to_string()))),
@@ -377,11 +400,8 @@ pub async fn riddle_solve_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     let solution = url_escape::decode(&solution);
-    println!(
-        "riddle_solve_handler called, oid = {}, solution = {}",
-        riddle_id_str, solution
-    );
-    let oid: bson::oid::ObjectId = match ObjectId::parse_str(&riddle_id_str) {
+    println!("riddle_solve_handler() {} {}", &riddle_id_str, &solution);
+    let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
@@ -416,7 +436,7 @@ pub async fn riddle_solve_handler(
                 println!("User updated.");
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", e);
+                println!("Error: update failed: {}", &e);
                 return Err(reject::custom(Error::RiddleNotSolvedError));
             }
         }
@@ -427,7 +447,7 @@ pub async fn riddle_solve_handler(
                 println!("User updated.");
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", e);
+                println!("Error: update failed: {}", &e);
                 return Err(reject::custom(Error::RiddleNotSolvedError));
             }
         }
@@ -448,10 +468,7 @@ pub async fn debriefing_get_by_riddle_id_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
-        "debriefing_get_by_riddle_id_handler called, oid = {}",
-        riddle_id_str
-    );
+    println!("debriefing_get_by_riddle_id_handler() {}", &riddle_id_str);
     let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -478,7 +495,7 @@ pub async fn riddle_get_oid_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("riddle_get_oid_handler called, oid = {}", riddle_id_str);
+    println!("riddle_get_oid_handler() {}", &riddle_id_str);
     let oid = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -496,11 +513,11 @@ pub async fn riddle_get_oid_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    println!("got riddle {}", riddle.level);
+    println!("got riddle level {}", riddle.level);
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
         for file in files.iter() {
-            println!("trying to load file {:?}", file);
+            println!("trying to load file {:?}", &file);
             let bucket: mongodb_gridfs::GridFSBucket =
                 GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
             let mut cursor = match bucket.open_download_stream(file.file_id).await {
@@ -565,7 +582,7 @@ pub async fn game_stats_handler(
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("game_stats_handler called, game_id = {}", game_id_str);
+    println!("game_stats_handler() {}", &game_id_str);
     let game_id: bson::oid::ObjectId = match ObjectId::parse_str(game_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -594,7 +611,7 @@ pub async fn riddle_get_by_level_handler(
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("riddle_get_by_level_handler called, level = {}", level);
+    println!("riddle_get_by_level_handler() {}", level);
     let riddle: Option<Riddle> = match db.get_riddle_by_level(level).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
@@ -647,34 +664,25 @@ pub async fn riddle_get_by_level_handler(
 }
 
 pub async fn user_authentication_handler(username: String) -> WebResult<impl Reply> {
-    println!(
-        "user_authentication_handler called, username = {}",
-        username
-    );
+    println!("user_authentication_handler() {}", &username);
     Ok(StatusCode::OK)
 }
 
 pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
-    println!("cheat_handler called, username = {}", username);
+    println!("cheat_handler() {}", username);
     if true {
         return Err(reject::custom(Error::CheatError));
     }
     Ok(StatusCode::PAYMENT_REQUIRED)
 }
 
-/*
-pub async fn webauthn_register_handler(username: String, db: DB) -> WebResult<impl Reply> {}
-
-pub async fn webauthn_finish_handler(username: String, db: DB) -> WebResult<impl Reply> {}
-*/
-
 pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Reply> {
-    println!("user_whoami_handler called, username = {}", username);
+    println!("user_whoami_handler() {}", &username);
     let user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user {} with email {}", user.username, user.email);
+    println!("got user {} {}", &user.username, &user.email);
     let in_room: bson::oid::ObjectId = match user.in_room {
         Some(room) => room,
         None => return Err(reject::custom(Error::RoomNotFoundError)),
@@ -716,15 +724,12 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
 }
 
 pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<impl Reply> {
-    println!(
-        "user_totp_handler called, username = {}, totp = {}",
-        body.username, body.totp
-    );
+    println!("user_totp_handler() {} {}", &body.username, &body.totp);
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user: {:?}", user);
+    println!("got user {:?}", &user);
     if !user.awaiting_second_factor {
         return Err(reject::custom(Error::PointlessTotpError));
     }
@@ -787,12 +792,12 @@ pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<i
 }
 
 pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
-    println!("user_login_handler called, username = {}", body.username);
+    println!("user_login_handler() {}", &body.username);
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user: {:?}", user);
+    println!("got user: {:?}", &user);
     let matches: bool = match argon2::verify_encoded(&user.hash, body.password.as_bytes()) {
         Ok(matches) => matches,
         Err(_) => return Err(reject::custom(Error::HashingError)),
@@ -881,10 +886,7 @@ pub async fn user_activation_handler(
     body: UserActivationRequest,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
-        "user_activation_handler called, username was: {}, pin was: {}",
-        body.username, body.pin
-    );
+    println!("user_activation_handler() {} {}", &body.username, &body.pin);
     let mut user: User = match db.get_user_with_pin(&body.username, body.pin).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
@@ -920,12 +922,12 @@ pub async fn user_activation_handler(
         b32_otp_secret,
         env!("CARGO_PKG_NAME"),
     );
-    println!("{}", otp_str);
+    dbg!(&otp_str);
     let totp_qrcode: Vec<u8> =
         match qrcode_generator::to_png_to_vec(&otp_str, QrCodeEcc::Medium, 256) {
             Ok(code) => code,
             Err(e) => {
-                println!("{:?}", e);
+                dbg!(&e);
                 return Err(reject::custom(Error::TotpQrCodeGenerationError));
             }
         };
@@ -955,21 +957,18 @@ pub async fn user_registration_handler(
     body: UserRegistrationRequest,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
-        "user_register_handler called, username was: {}, email was: {}, role was: {}, password was: {}",
-        body.username, body.email, body.role, body.password
-    );
+    println!("user_register_handler() {:?}", &body);
     if body.password.len() < 8 || bad_password(&body.password) {
         return Err(reject::custom(Error::UnsafePasswordError));
     }
-    if !RE_MAIL.is_match(body.email.as_str()) {
+    if !RE_MAIL.is_match(&body.email.as_str()) {
         return Err(reject::custom(Error::InvalidEmailError));
     }
     match db.get_user(&body.username).await {
         Ok(_) => return Err(reject::custom(Error::UsernameNotAvailableError)),
         Err(Error::UserNotFoundError) => (),
         Err(e) => {
-            println!("{}", e);
+            println!("{}", &e);
             return Err(reject::custom(e));
         }
     }
@@ -999,6 +998,7 @@ pub async fn user_registration_handler(
             &body.email,
             body.role,
             hash,
+            body.second_factor,
             Some(pin),
         ))
         .await
@@ -1056,6 +1056,56 @@ Dein Labyrinth-Betreuer
     Ok(warp::reply::with_status(reply, StatusCode::CREATED))
 }
 
+pub async fn webauthn_register_start_handler(
+    username: String,
+    mut db: DB,
+) -> WebResult<impl Reply> {
+    println!("webauthn_register_start_handler() {}", &username);
+    let user: User = match db.get_user(&username).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    println!("got user {:?}", user);
+    let wa_config =
+        webauthn::WebauthnVolatileConfig::new(RP_NAME, RP_ORIGIN, RP_ID, Option::default());
+    let wa_actor = webauthn::WebauthnActor::new(wa_config);
+    let ccr = match wa_actor.challenge_register(&mut db, &username).await {
+        Ok(ccr) => ccr,
+        Err(_) => return Err(reject::custom(Error::WebauthnError)),
+    };
+    Ok(warp::reply::with_status(
+        warp::reply::json(&json!(&WebAuthnRegisterStartResponse {
+            ok: true,
+            message: Option::default(),
+            ccr: ccr,
+        })),
+        StatusCode::OK,
+    ))
+}
+
+pub async fn webauthn_register_finish_handler(
+    body: RegisterPublicKeyCredential,
+    username: String,
+    mut db: DB,
+) -> WebResult<impl Reply> {
+    println!("webauthn_register_finish_handler() {:?}", &body);
+    let wa_config =
+        webauthn::WebauthnVolatileConfig::new(RP_NAME, RP_ORIGIN, RP_ID, Option::default());
+    let wa_actor = webauthn::WebauthnActor::new(wa_config);
+    let r = match wa_actor.register(&mut db, &username, &body).await {
+        Ok(r) => r,
+        Err(_) => return Err(reject::custom(Error::WebauthnError)),
+    };
+
+    Ok(warp::reply::with_status(
+        warp::reply::json(&json!(&WebAuthnRegisterFinishResponse {
+            ok: true,
+            message: Option::default(),
+        })),
+        StatusCode::OK,
+    ))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
@@ -1096,6 +1146,17 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .and_then(webauthn_finish_handler);
     */
+    let webauthn_register_start_route = warp::path!("user" / "webauthn" / "register" / "start")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(webauthn_register_start_handler);
+    let webauthn_register_finish_route = warp::path!("user" / "webauthn" / "register" / "finish")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(webauthn_register_finish_handler);
     let user_auth_route = warp::path!("user" / "auth")
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -1153,8 +1214,8 @@ async fn main() -> Result<()> {
         .or(user_totp_route)
         .or(user_register_route)
         .or(user_activation_route)
-        //.or(webauthn_register_route)
-        //.or(webauthn_finish_route)
+        .or(webauthn_register_start_route)
+        .or(webauthn_register_finish_route)
         .or(ping_route)
         .or(cheat_route)
         .or(game_stats_route)

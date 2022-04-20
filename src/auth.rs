@@ -113,7 +113,7 @@ pub fn create_jwt(uid: &str, role: &Role) -> Result<String> {
 async fn authorize((role, headers): (Role, HeaderMap<HeaderValue>)) -> WebResult<String> {
     match jwt_from_header(&headers) {
         Ok(jwt) => {
-            println!("JWT = {:?}", jwt);
+            dbg!(&jwt);
             // TODO: check if token has expired
             let decoded = decode::<Claims>(
                 &jwt,

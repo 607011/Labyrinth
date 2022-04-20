@@ -10,10 +10,13 @@ use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
 use rand::{distributions::Distribution, Rng};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::env;
 use std::fmt;
 use warp::Filter;
+use webauthn_rs::proto::Credential;
+use webauthn_rs::RegistrationState;
 
 pub type PinType = u32;
 
@@ -154,6 +157,10 @@ pub struct User {
     pub totp_key: Vec<u8>,
     #[serde(default)]
     pub recovery_keys: Vec<String>,
+    #[serde(default)]
+    pub webauthn_registration_state: Option<RegistrationState>,
+    #[serde(default)]
+    pub webauthn_credentials: Vec<Credential>,
 }
 
 impl User {
@@ -162,6 +169,7 @@ impl User {
         email: &String,
         role: Role,
         hash: String,
+        second_factor: SecondFactor,
         pin: Option<PinType>,
     ) -> Self {
         User {
@@ -181,9 +189,11 @@ impl User {
             score: 0,
             in_room: Option::default(),
             awaiting_second_factor: false,
-            second_factors: Vec::new(),
+            second_factors: Vec::from([second_factor]),
             totp_key: Vec::new(),
             recovery_keys: Vec::new(),
+            webauthn_registration_state: Option::default(),
+            webauthn_credentials: Vec::new(),
         }
     }
 }
@@ -249,7 +259,8 @@ impl DB {
     }
 
     pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<Option<u32>> {
-        println!("get_num_rooms(\"{}\")", game_id);
+        println!("get_num_rooms()");
+        dbg!(game_id);
         match self
             .get_rooms_coll()
             .count_documents(doc! { "game_id": game_id }, None)
@@ -261,7 +272,8 @@ impl DB {
     }
 
     pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<u32>> {
-        println!("get_num_riddles(\"{}\")", game_id);
+        println!("get_num_riddles()");
+        dbg!(game_id);
         // XXX: wrong query
         match self
             .get_rooms_coll()
@@ -274,7 +286,8 @@ impl DB {
     }
 
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
-        println!("get_riddle_by_level(\"{}\")", level);
+        println!("get_riddle_by_level()");
+        dbg!(level);
         let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "level": level }, None)
@@ -404,7 +417,10 @@ impl DB {
             .await
         {
             Ok(user) => user,
-            Err(e) => return Err(MongoQueryError(e)),
+            Err(e) => {
+                println!("{:?}", &e);
+                return Err(MongoQueryError(e));
+            }
         };
         match user {
             Some(user) => Ok(user),
@@ -473,7 +489,7 @@ impl DB {
         };
         match result {
             Some(user) => {
-                println!("Found {} <{}>", user.username, user.email);
+                println!("Found {} <{}>", &user.username, &user.email);
                 Ok(user)
             }
             None => {
@@ -521,6 +537,60 @@ impl DB {
         }
     }
 
+    pub async fn save_webauthn_registration_state(
+        &self,
+        username: &String,
+        rs: &RegistrationState,
+    ) -> Result<()> {
+        println!(
+            "save_webauthn_registration_state(); username = {}, rs = {:?}",
+            username, rs
+        );
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "username": username, "activated": true },
+                doc! {
+                    "$set": {
+                        "awaiting_second_factor": true,
+                        "webauthn_registration_state": Some(bson::to_bson(rs).unwrap()),
+                    },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
+    }
+
+    pub async fn save_webauthn_registration(
+        &self,
+        username: &String,
+        creds: &Vec<Credential>,
+    ) -> Result<()> {
+        println!("save_webauthn_registration(); username = {}", username);
+        dbg!(&creds);
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "username": username, "activated": true },
+                doc! {
+                    "$set": {
+                        "awaiting_second_factor": true,
+                        "webauthn_credentials": Some(bson::to_bson(creds).unwrap()),
+                    },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
+    }
+
     pub async fn rewrite_user_score(&mut self, user: &User) -> Result<()> {
         match self
             .get_users_coll()
@@ -539,6 +609,7 @@ impl DB {
     }
 
     pub async fn create_user(&mut self, user: &User) -> Result<()> {
+        println!("create_user({:?})", user);
         match self.get_users_coll().insert_one(user, None).await {
             Ok(_) => Ok(()),
             Err(e) => Err(MongoQueryError(e)),
@@ -561,11 +632,11 @@ impl DB {
             .await
         {
             Ok(_) => {
-                println!("Updated {}.", user.username);
+                println!("Updated {}.", &user.username);
                 Ok(())
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", e);
+                println!("Error: update failed ({:?})", &e);
                 Err(MongoQueryError(e))
             }
         }
@@ -588,7 +659,7 @@ impl DB {
         };
         let first_room_id: bson::oid::ObjectId = match entrance {
             Some(room) => {
-                println!("Found room {}", room.id);
+                println!("Found room {}", &room.id);
                 room.id
             }
             None => return Err(RoomNotFoundError),
@@ -635,7 +706,6 @@ impl DB {
                 "rooms_entered": &user.rooms_entered,
                 "totp_key": base64::encode(&user.totp_key),
                 "recovery_keys": &user.recovery_keys,
-                "second_factors": bson::to_bson(&vec!([SecondFactor::Totp])).unwrap(),
             },
             "$unset": {
                 "pin": 0 as u32,
@@ -647,10 +717,10 @@ impl DB {
             .await
         {
             Ok(_) => {
-                println!("Updated {}.", user.username);
+                println!("Updated {}.", &user.username);
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", e);
+                println!("Error: update failed ({:?})", &e);
                 return Err(MongoQueryError(e));
             }
         }
