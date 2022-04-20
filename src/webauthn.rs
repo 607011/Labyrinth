@@ -8,7 +8,7 @@ use webauthn_rs::{Webauthn, WebauthnConfig};
 
 type WebauthnResult<T> = core::result::Result<T, WebauthnError>;
 
-use crate::db::DB;
+use crate::db::{User, DB};
 
 pub struct WebauthnVolatileConfig {
     pub rp_name: String,
@@ -82,7 +82,7 @@ impl WebauthnVolatileConfig {
         WebauthnVolatileConfig {
             rp_name: rp_name.to_string(),
             rp_id: rp_id.to_string(),
-            rp_origin: Url::parse(rp_origin).expect("Failed to parse origin"),
+            rp_origin: Url::parse(rp_origin).expect("Failed to parse RP origin"),
             attachment,
         }
     }
@@ -105,11 +105,25 @@ impl WebauthnActor {
         username: &String,
     ) -> WebauthnResult<CreationChallengeResponse> {
         println!("handle challenge_register -> {:?}", &username);
+        let user: User = match db.get_user(username).await {
+            Ok(user) => user,
+            Err(_) => return Err(WebauthnError::UserNotPresent),
+        };
+        let excluded: Option<Vec<CredentialID>> = if user.webauthn_credentials.len() > 0 {
+            Some(
+                user.webauthn_credentials
+                    .iter()
+                    .map(|cred| cred.cred_id.clone())
+                    .collect(),
+            )
+        } else {
+            Option::default()
+        };
         let (ccr, rs) = self.wan.generate_challenge_register_options(
             username.as_bytes().to_vec(),
             username.clone(),
             username.clone(),
-            None,
+            excluded,
             Some(webauthn_rs::proto::UserVerificationPolicy::Discouraged),
             None,
         )?;
