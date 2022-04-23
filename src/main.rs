@@ -14,9 +14,10 @@ use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
 use mongodb::bson::doc;
+use mongodb::options::FindOneOptions;
 use mongodb_gridfs::{options::GridFSBucketOptions, GridFSBucket};
 use qrcode_generator::QrCodeEcc;
-use rand;
+use rand::Rng;
 use rand_core::{OsRng, RngCore};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use totp_lite::{totp_custom, Sha1};
 use url_escape;
 use warp::{http::StatusCode, reject, reply::WithStatus, Filter, Rejection, Reply};
-use webauthn_rs::proto::{CreationChallengeResponse, RegisterPublicKeyCredential};
+use webauthn_rs::proto::{
+    CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
+    RequestChallengeResponse,
+};
 
 mod auth;
 mod b64;
@@ -102,7 +106,7 @@ pub struct UserRegistrationRequest {
     #[serde(default)]
     pub locale: String,
     #[serde(rename = "secondFactorMethod")]
-    pub second_factor: SecondFactor,
+    pub second_factor: Option<SecondFactor>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -164,6 +168,35 @@ impl RoomResponse {
 }
 
 #[derive(Serialize, Debug)]
+pub struct TotpResponseRaw {
+    #[serde(with = "b64")]
+    pub qrcode: Vec<u8>,
+    pub secret: String,
+    pub hash: String,
+    pub interval: u32,
+    pub digits: u32,
+}
+
+impl TotpResponseRaw {
+    pub fn new(qrcode: Vec<u8>, secret: String) -> TotpResponseRaw {
+        TotpResponseRaw {
+            qrcode,
+            secret,
+            hash: "SHA1".to_string(),
+            interval: 30,
+            digits: 6,
+        }
+    }
+}
+
+#[derive(Serialize, Debug)]
+pub struct TotpResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub totp: TotpResponseRaw,
+}
+
+#[derive(Serialize, Debug)]
 pub struct UserWhoamiResponse {
     pub ok: bool,
     pub message: Option<String>,
@@ -186,9 +219,9 @@ pub struct UserWhoamiResponse {
     pub solved: Vec<ObjectId>,
     pub rooms_entered: Vec<ObjectId>,
     pub jwt: Option<String>,
-    #[serde(with = "b64")]
-    pub totp_qrcode: Vec<u8>,
+    pub totp: Option<TotpResponseRaw>,
     pub recovery_keys: Option<Vec<String>>,
+    pub configured_2fa: Vec<SecondFactor>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -257,9 +290,9 @@ pub struct SteppedThroughResponse {
 pub struct GameStatsResponse {
     pub ok: bool,
     pub message: Option<String>,
-    pub num_rooms: u32,
-    pub num_riddles: u32,
-    pub max_score: u32,
+    pub num_rooms: i32,
+    pub num_riddles: i32,
+    pub max_score: i32,
 }
 
 #[derive(Serialize, Debug)]
@@ -285,6 +318,28 @@ struct WebAuthnRegisterStartResponse {
     pub ok: bool,
     pub message: Option<String>,
     pub ccr: CreationChallengeResponse,
+}
+
+#[derive(Serialize, Debug)]
+struct WebAuthnLoginStartResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub rcr: RequestChallengeResponse,
+}
+
+#[derive(Serialize, Debug)]
+struct WebAuthnLoginFinishResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub jwt: String,
+}
+
+#[derive(Serialize, Debug)]
+struct MFARequiredResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    #[serde(rename = "mfaMethods")]
+    pub configured_2fa: Vec<SecondFactor>,
 }
 
 fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
@@ -409,7 +464,7 @@ pub async fn riddle_solve_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let (riddle_id, user, _msg) = db.is_riddle_accessible(&oid, &username).await;
+    let (riddle_id, user, _msg) = db.riddle_accessibility(&oid, &username).await;
     let riddle_id = match riddle_id {
         Some(in_room) => in_room,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
@@ -477,7 +532,13 @@ pub async fn debriefing_get_by_riddle_id_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let solved_riddle: Option<Riddle> = match db.get_riddle_if_solved(&oid, &username).await {
+    let query_options: FindOneOptions = FindOneOptions::builder()
+        .sort(doc! { "debriefing": 1 })
+        .build();
+    let solved_riddle: Option<Riddle> = match db
+        .get_riddle_if_solved(&oid, &username, query_options)
+        .await
+    {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
     };
@@ -504,7 +565,7 @@ pub async fn riddle_get_oid_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let (riddle_id, _user, message) = db.is_riddle_accessible(&oid, &username).await;
+    let (riddle_id, _user, message) = db.riddle_accessibility(&oid, &username).await;
     let riddle_id: bson::oid::ObjectId = match riddle_id {
         Some(riddle_id) => riddle_id,
         None => return Ok(err_response(message)),
@@ -591,20 +652,24 @@ pub async fn game_stats_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let num_rooms: Option<u32> = match db.get_num_rooms(&game_id).await {
+    let num_rooms: Option<i32> = match db.get_num_rooms(&game_id).await {
         Ok(num_rooms) => num_rooms,
         Err(e) => return Err(reject::custom(e)),
     };
-    let num_riddles: Option<u32> = match db.get_num_riddles(&game_id).await {
+    let num_riddles: Option<i32> = match db.get_num_riddles(&game_id).await {
         Ok(num_riddles) => num_riddles,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let max_score: Option<i32> = match db.get_max_score(&game_id).await {
+        Ok(max_score) => max_score,
         Err(e) => return Err(reject::custom(e)),
     };
     let reply: warp::reply::Json = warp::reply::json(&json!(&GameStatsResponse {
         ok: true,
         message: Option::default(),
         num_rooms: num_rooms.unwrap_or(0),
-        num_riddles: num_riddles.unwrap_or(0), // TODO
-        max_score: 0,                          // TODO
+        num_riddles: num_riddles.unwrap_or(0),
+        max_score: max_score.unwrap_or(0),
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -705,6 +770,13 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         },
         Err(e) => return Err(reject::custom(e)),
     };
+    let mut configured_2fa: Vec<SecondFactor> = Vec::new();
+    if user.totp_key.len() > 0 {
+        configured_2fa.push(SecondFactor::Totp);
+    }
+    if user.webauthn.credentials.len() > 0 {
+        configured_2fa.push(SecondFactor::Fido2);
+    }
     let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
         ok: true,
         message: Option::default(),
@@ -721,14 +793,18 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt: Option::default(),
-        totp_qrcode: Vec::new(),
+        totp: Option::default(),
         recovery_keys: Option::default(),
+        configured_2fa,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
-pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<impl Reply> {
-    println!("user_totp_handler() {} {}", &body.username, &body.totp);
+pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebResult<impl Reply> {
+    println!(
+        "user_totp_login_handler(); username = {}, totp = {}",
+        &body.username, &body.totp
+    );
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
@@ -737,7 +813,12 @@ pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<i
     if !user.awaiting_second_factor {
         return Err(reject::custom(Error::PointlessTotpError));
     }
-    if user.totp_key.len() > 0 && user.second_factors.contains(&SecondFactor::Totp) {
+    let mut configured_2fa: Vec<SecondFactor> = Vec::new();
+    if user.webauthn.credentials.len() > 0 {
+        configured_2fa.push(SecondFactor::Fido2);
+    }
+    if user.totp_key.len() > 0 {
+        configured_2fa.push(SecondFactor::Totp);
         let seconds: u64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -751,8 +832,8 @@ pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<i
         Ok(()) => (),
         Err(e) => return Err(reject::custom(e)),
     }
-    let token_str: String = match auth::create_jwt(&user.username, &user.role) {
-        Ok(token_str) => token_str,
+    let jwt: Option<String> = match auth::create_jwt(&user.username, &user.role) {
+        Ok(jwt) => Some(jwt),
         Err(e) => return Err(reject::custom(e)),
     };
     let in_room: bson::oid::ObjectId = match user.in_room {
@@ -788,9 +869,10 @@ pub async fn user_totp_handler(body: UserTotpRequest, mut db: DB) -> WebResult<i
         in_room: room_response,
         solved: user.solved,
         rooms_entered: user.rooms_entered,
-        jwt: Some(token_str),
-        totp_qrcode: Vec::new(),
+        jwt,
+        totp: Option::default(),
         recovery_keys: Option::default(),
+        configured_2fa,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -809,120 +891,105 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
     if !matches {
         return Err(reject::custom(Error::WrongCredentialsError));
     }
-    println!("Hashes match. User is verified.");
-    if user.totp_key.len() > 0 && user.second_factors.contains(&SecondFactor::Totp) {
-        let totp: String = match body.totp {
-            Some(totp) => totp,
-            None => {
-                match db.set_user_awaiting_2fa(&user).await {
-                    Ok(()) => (),
-                    Err(e) => return Err(reject::custom(e)),
+    println!("Hashes match.");
+    let mut configured_2fa: Vec<SecondFactor> = Vec::new();
+    let mut authenticated = true;
+    if user.totp_key.len() > 0 {
+        // if the TOTP is sent along the usual credentials, check if TOTP is correct
+        if let Some(totp) = body.totp {
+            let seconds: u64 = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            authenticated = match totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
+                true => {
+                    println!("TOTPs match");
+                    true
                 }
-                let reply: warp::reply::Json =
-                    warp::reply::json(&json!(&SecondFactorRequiredResponse {
-                        ok: false,
-                        message: "2FA required".to_string(),
-                        second_factors: Vec::from([SecondFactor::Totp]),
-                    }));
-                return Ok(warp::reply::with_status(reply, StatusCode::OK));
+                false => return Err(reject::custom(Error::WrongCredentialsError)),
             }
-        };
-        let seconds: u64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        match totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
-            true => println!("TOTPs match"),
-            false => return Err(reject::custom(Error::WrongCredentialsError)),
+        } else {
+            authenticated = false;
+            configured_2fa.push(SecondFactor::Totp);
+            match db.set_user_awaiting_2fa(&user, true).await {
+                Ok(()) => (),
+                Err(e) => return Err(reject::custom(e)),
+            }
         }
-    } else if user.second_factors.contains(&SecondFactor::Fido2) {
-        // TODO
     }
-    match db.login_user(&user).await {
-        Ok(()) => (),
-        Err(e) => return Err(reject::custom(e)),
+    if user.webauthn.credentials.len() > 0 {
+        authenticated = false;
+        configured_2fa.push(SecondFactor::Fido2);
+        match db.set_user_awaiting_2fa(&user, true).await {
+            Ok(()) => (),
+            Err(e) => return Err(reject::custom(e)),
+        }
     }
-    let token_str: String = match auth::create_jwt(&user.username, &user.role) {
-        Ok(token_str) => token_str,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    let in_room: bson::oid::ObjectId = match user.in_room {
-        Some(room) => room,
-        None => return Err(reject::custom(Error::RoomNotFoundError)),
-    };
-    let room_response: RoomResponse = match db.get_room(&in_room).await {
-        Ok(room) => RoomResponse {
+    if authenticated {
+        match db.login_user(&user).await {
+            Ok(()) => (),
+            Err(e) => return Err(reject::custom(e)),
+        }
+        let jwt: Option<String> = match auth::create_jwt(&user.username, &user.role) {
+            Ok(jwt) => Some(jwt),
+            Err(e) => return Err(reject::custom(e)),
+        };
+        let in_room: bson::oid::ObjectId = match user.in_room {
+            Some(room) => room,
+            None => return Err(reject::custom(Error::RoomNotFoundError)),
+        };
+        let room_response: RoomResponse = match db.get_room(&in_room).await {
+            Ok(room) => RoomResponse {
+                ok: true,
+                message: Option::default(),
+                id: room.id,
+                number: room.number,
+                coords: room.coords,
+                neighbors: room.neighbors,
+                game_id: room.game_id,
+                entry: room.entry,
+                exit: room.exit,
+            },
+            Err(e) => return Err(reject::custom(e)),
+        };
+        let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
             ok: true,
             message: Option::default(),
-            id: room.id,
-            number: room.number,
-            coords: room.coords,
-            neighbors: room.neighbors,
-            game_id: room.game_id,
-            entry: room.entry,
-            exit: room.exit,
-        },
-        Err(e) => return Err(reject::custom(e)),
-    };
-    let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
-        ok: true,
-        message: Option::default(),
-        username: user.username.clone(),
-        email: user.email.clone(),
-        role: user.role.clone(),
-        activated: user.activated,
-        created: user.created,
-        registered: user.registered,
-        last_login: user.last_login,
-        level: user.level,
-        score: user.score,
-        in_room: room_response,
-        solved: user.solved,
-        rooms_entered: user.rooms_entered,
-        jwt: Some(token_str),
-        totp_qrcode: Vec::new(),
-        recovery_keys: Option::default(),
-    }));
-    Ok(warp::reply::with_status(reply, StatusCode::OK))
+            username: user.username.clone(),
+            email: user.email.clone(),
+            role: user.role.clone(),
+            activated: user.activated,
+            created: user.created,
+            registered: user.registered,
+            last_login: user.last_login,
+            level: user.level,
+            score: user.score,
+            in_room: room_response,
+            solved: user.solved,
+            rooms_entered: user.rooms_entered,
+            jwt,
+            totp: Option::default(),
+            recovery_keys: Option::default(),
+            configured_2fa,
+        }));
+        Ok(warp::reply::with_status(reply, StatusCode::OK))
+    } else {
+        let reply: warp::reply::Json = warp::reply::json(&json!(&MFARequiredResponse {
+            ok: false,
+            message: Some("second factor required".to_string()),
+            configured_2fa
+        }));
+        Ok(warp::reply::with_status(reply, StatusCode::OK))
+    }
 }
 
-pub async fn user_activation_handler(
-    body: UserActivationRequest,
-    mut db: DB,
-) -> WebResult<impl Reply> {
-    println!("user_activation_handler() {} {}", &body.username, &body.pin);
-    let mut user: User = match db.get_user_with_pin(&body.username, body.pin).await {
-        Ok(user) => user,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    match db.activate_user(&mut user).await {
-        Ok(()) => (),
-        Err(e) => return Err(reject::custom(e)),
-    };
-    let token_str: String = match auth::create_jwt(&user.username, &user.role) {
-        Ok(token_str) => token_str,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    let room_response: RoomResponse = match db.get_room(&user.in_room.unwrap()).await {
-        Ok(room) => RoomResponse {
-            ok: true,
-            message: Option::default(),
-            id: room.id,
-            number: room.number,
-            coords: room.coords,
-            neighbors: room.neighbors,
-            game_id: room.game_id,
-            entry: room.entry,
-            exit: room.exit,
-        },
-        Err(e) => return Err(reject::custom(e)),
-    };
+fn generate_otp_qrcode(username: &String, totp_key: &Vec<u8>) -> Result<(String, Vec<u8>)> {
     let b32_otp_secret: String =
-        base32::encode(base32::Alphabet::RFC4648 { padding: false }, &user.totp_key);
+        base32::encode(base32::Alphabet::RFC4648 { padding: false }, totp_key);
     let otp_str = format!(
         "otpauth://totp/{}: {}?secret={}&issuer={}",
         env!("CARGO_PKG_NAME"),
-        user.username,
+        username,
         b32_otp_secret,
         env!("CARGO_PKG_NAME"),
     );
@@ -932,9 +999,98 @@ pub async fn user_activation_handler(
             Ok(code) => code,
             Err(e) => {
                 dbg!(&e);
-                return Err(reject::custom(Error::TotpQrCodeGenerationError));
+                return Err(Error::TotpQrCodeGenerationError);
             }
         };
+    Ok((b32_otp_secret, totp_qrcode))
+}
+
+pub async fn user_totp_enable_handler(username: String, db: DB) -> WebResult<impl Reply> {
+    println!("user_totp_enable_handler(); username = {}", &username);
+    let user: User = match db.get_user(&username).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let totp_key: Vec<u8> = rand::thread_rng().gen::<[u8; 32]>().to_vec();
+    match db
+        .get_users_coll()
+        .update_one(
+            doc! { "username": username.clone() },
+            doc! {
+                "$set": {
+                    "totp_key": base64::encode(&totp_key),
+                },
+            },
+            None,
+        )
+        .await
+    {
+        Ok(_) => {
+            println!("Updated {}.", &user.username);
+        }
+        Err(e) => {
+            println!("Error: update failed ({:?})", &e);
+            return Err(reject::custom(Error::MongoQueryError(e)));
+        }
+    }
+    let (secret, totp_qrcode) = match generate_otp_qrcode(&user.username, &totp_key) {
+        Ok((secret, qrcode)) => (secret, qrcode),
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let reply: warp::reply::Json = warp::reply::json(&json!(&TotpResponse {
+        ok: true,
+        message: Option::default(),
+        totp: TotpResponseRaw::new(totp_qrcode, secret),
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
+pub async fn user_activation_handler(
+    body: UserActivationRequest,
+    mut db: DB,
+) -> WebResult<impl Reply> {
+    println!(
+        "user_activation_handler(); username = {}; pin = {}",
+        &body.username, &body.pin
+    );
+    let mut user: User = match db.get_user_with_pin(&body.username, body.pin).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    match db.activate_user(&mut user).await {
+        Ok(()) => (),
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let in_room: RoomResponse = match db.get_room(&user.in_room.unwrap()).await {
+        Ok(room) => RoomResponse {
+            ok: true,
+            message: Option::default(),
+            id: room.id,
+            number: room.number,
+            coords: room.coords,
+            neighbors: room.neighbors,
+            game_id: room.game_id,
+            entry: room.entry,
+            exit: room.exit,
+        },
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let mut configured_2fa: Vec<SecondFactor> = Vec::new();
+    let (totp, jwt) = match user.totp_key.is_empty() {
+        true => (Option::default(), Option::default()),
+        false => {
+            configured_2fa.push(SecondFactor::Totp);
+            let (secret, totp_qrcode) = match generate_otp_qrcode(&user.username, &user.totp_key) {
+                Ok((secret, qrcode)) => (secret, qrcode),
+                Err(e) => return Err(reject::custom(e)),
+            };
+            let jwt: Option<String> = match auth::create_jwt(&user.username, &user.role) {
+                Ok(jwt) => Some(jwt),
+                Err(e) => return Err(reject::custom(e)),
+            };
+            (Some(TotpResponseRaw::new(totp_qrcode, secret)), jwt)
+        }
+    };
     let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
         ok: true,
         message: Option::default(),
@@ -947,12 +1103,13 @@ pub async fn user_activation_handler(
         last_login: user.last_login,
         level: user.level,
         score: user.score,
-        in_room: room_response,
+        in_room,
         solved: user.solved,
         rooms_entered: user.rooms_entered,
-        jwt: Some(token_str),
-        totp_qrcode: totp_qrcode,
+        jwt,
+        totp,
         recovery_keys: Some(user.recovery_keys),
+        configured_2fa
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -996,14 +1153,18 @@ pub async fn user_registration_handler(
     while pin == 0 {
         pin = OsRng.next_u32() % 1000000;
     }
+    let totp_key = match body.second_factor {
+        Some(SecondFactor::Totp) => rand::thread_rng().gen::<[u8; 32]>().to_vec(),
+        _ => Vec::new(),
+    };
     match db
         .create_user(&User::new(
             &body.username,
             &body.email,
             body.role,
             hash,
-            body.second_factor,
-            Some(pin),
+            pin,
+            totp_key,
         ))
         .await
     {
@@ -1086,24 +1247,115 @@ pub async fn webauthn_register_start_handler(
 }
 
 pub async fn webauthn_register_finish_handler(
-    body: RegisterPublicKeyCredential,
     username: String,
+    body: RegisterPublicKeyCredential,
     mut db: DB,
 ) -> WebResult<impl Reply> {
     println!("webauthn_register_finish_handler() {:?}", &body);
+    let user: User = match db.get_user(&username).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    if !user.awaiting_second_factor {
+        return Err(reject::custom(Error::PointlessFido2Error));
+    }
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
-    let r = match wa_actor.register(&mut db, &username, &body).await {
-        Ok(r) => r,
+    match wa_actor.register(&mut db, &username, &body).await {
+        Ok(()) => (),
+        Err(_) => return Err(reject::custom(Error::WebauthnError)),
+    }
+    let reply: warp::reply::Json = warp::reply::json(&json!(&WebAuthnRegisterFinishResponse {
+        ok: true,
+        message: Option::default(),
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
+pub async fn webauthn_login_start_handler(username: String, mut db: DB) -> WebResult<impl Reply> {
+    println!("webauthn_login_start_handler() {}", &username);
+    let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
+    let rcr = match wa_actor.challenge_authenticate(&mut db, &username).await {
+        Ok(rcr) => rcr,
         Err(_) => return Err(reject::custom(Error::WebauthnError)),
     };
-
     Ok(warp::reply::with_status(
-        warp::reply::json(&json!(&WebAuthnRegisterFinishResponse {
+        warp::reply::json(&json!(&WebAuthnLoginStartResponse {
             ok: true,
             message: Option::default(),
+            rcr: rcr,
         })),
         StatusCode::OK,
     ))
+}
+
+pub async fn webauthn_login_finish_handler(
+    username: String,
+    body: PublicKeyCredential,
+    mut db: DB,
+) -> WebResult<impl Reply> {
+    println!(
+        "webauthn_login_finish_handler(); username = {}, body = {:?}",
+        &username, &body
+    );
+    let user: User = match db.get_user(&username).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
+    match wa_actor.authenticate(&mut db, &user, &body).await {
+        Ok(()) => (),
+        Err(_) => return Err(reject::custom(Error::WebauthnError)),
+    }
+    match db.set_user_awaiting_2fa(&user, false).await {
+        Ok(()) => (),
+        Err(_) => return Err(reject::custom(Error::WebauthnError)),
+    }
+    let jwt: Option<String> = match auth::create_jwt(&username, &user.role) {
+        Ok(jwt) => Some(jwt),
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let room_response: RoomResponse = match db.get_room(&user.in_room.unwrap()).await {
+        Ok(room) => RoomResponse {
+            ok: true,
+            message: Option::default(),
+            id: room.id,
+            number: room.number,
+            coords: room.coords,
+            neighbors: room.neighbors,
+            game_id: room.game_id,
+            entry: room.entry,
+            exit: room.exit,
+        },
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let mut configured_2fa: Vec<SecondFactor> = Vec::new();
+    if user.totp_key.len() > 0 {
+        configured_2fa.push(SecondFactor::Totp);
+    }
+    if user.webauthn.credentials.len() > 0 {
+        configured_2fa.push(SecondFactor::Fido2);
+    }
+    let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
+        ok: true,
+        message: Option::default(),
+        username: user.username.clone(),
+        email: user.email.clone(),
+        role: user.role.clone(),
+        activated: user.activated,
+        created: user.created,
+        registered: user.registered,
+        last_login: user.last_login,
+        level: user.level,
+        score: user.score,
+        in_room: room_response,
+        solved: user.solved,
+        rooms_entered: user.rooms_entered,
+        jwt,
+        totp: Option::default(),
+        recovery_keys: Option::default(),
+        configured_2fa,
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 #[tokio::main]
@@ -1128,35 +1380,39 @@ async fn main() -> Result<()> {
         .and(warp::body::json())
         .and(with_db(db.clone()))
         .and_then(user_login_handler);
-    let user_totp_route = warp::path!("user" / "totp")
+    let user_totp_login_route = warp::path!("user" / "totp" / "login")
         .and(warp::post())
         .and(warp::body::json())
         .and(with_db(db.clone()))
-        .and_then(user_totp_handler);
+        .and_then(user_totp_login_handler);
+    let user_totp_enable_route = warp::path!("user" / "totp" / "enable")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(user_totp_enable_handler);
+    let webauthn_register_start_route =
+        warp::path!("user" / "webauthn" / "register" / "start" /  /* username */String)
+            .and(warp::post())
+            .and(with_db(db.clone()))
+            .and_then(webauthn_register_start_handler);
+    let webauthn_register_finish_route =
+        warp::path!("user" / "webauthn" / "register" / "finish" /  /* username */String)
+            .and(warp::post())
+            .and(warp::body::json())
+            .and(with_db(db.clone()))
+            .and_then(webauthn_register_finish_handler);
+    let webauthn_login_start_route =
+        warp::path!("user" / "webauthn" / "login" / "start" /  /* username */String)
+            .and(warp::post())
+            .and(with_db(db.clone()))
+            .and_then(webauthn_login_start_handler);
+    let webauthn_login_finish_route =
+        warp::path!("user" / "webauthn" / "login" / "finish" /  /* username */String)
+            .and(warp::post())
+            .and(warp::body::json())
+            .and(with_db(db.clone()))
+            .and_then(webauthn_login_finish_handler);
     /* Routes accessible only to authorized users */
-    /*
-    let webauthn_register_route = warp::path!("user" / "webauthn" / "register")
-        .and(warp::post())
-        .and(with_auth(Role::User))
-        .and(with_db(db.clone()))
-        .and_then(webauthn_register_handler);
-    let webauthn_finish_route = warp::path!("user" / "webauthn" / "finish")
-        .and(warp::post())
-        .and(with_auth(Role::User))
-        .and(with_db(db.clone()))
-        .and_then(webauthn_finish_handler);
-    */
-    let webauthn_register_start_route = warp::path!("user" / "webauthn" / "register" / "start")
-        .and(warp::post())
-        .and(with_auth(Role::User))
-        .and(with_db(db.clone()))
-        .and_then(webauthn_register_start_handler);
-    let webauthn_register_finish_route = warp::path!("user" / "webauthn" / "register" / "finish")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(with_auth(Role::User))
-        .and(with_db(db.clone()))
-        .and_then(webauthn_register_finish_handler);
     let user_auth_route = warp::path!("user" / "auth")
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -1211,11 +1467,14 @@ async fn main() -> Result<()> {
         .or(user_whoami_route)
         .or(user_auth_route)
         .or(user_login_route)
-        .or(user_totp_route)
+        .or(user_totp_enable_route)
+        .or(user_totp_login_route)
         .or(user_register_route)
         .or(user_activation_route)
         .or(webauthn_register_start_route)
         .or(webauthn_register_finish_route)
+        .or(webauthn_login_start_route)
+        .or(webauthn_login_finish_route)
         .or(ping_route)
         .or(cheat_route)
         .or(game_stats_route)

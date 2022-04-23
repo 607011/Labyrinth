@@ -57,6 +57,8 @@ pub enum Error {
     RiddleNotSolvedError,
     #[error("wrong credentials")]
     WrongCredentialsError,
+    #[error("pointless FIDO2")]
+    PointlessFido2Error,
     #[error("pointless TOTP")]
     PointlessTotpError,
     #[error("TOTP missing")]

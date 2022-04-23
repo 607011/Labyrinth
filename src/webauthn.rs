@@ -2,7 +2,8 @@ use url::Url;
 use webauthn_rs::error::WebauthnError;
 use webauthn_rs::proto::{
     AttestationConveyancePreference, AuthenticatorAttachment, COSEAlgorithm,
-    CreationChallengeResponse, Credential, CredentialID, RegisterPublicKeyCredential,
+    CreationChallengeResponse, Credential, CredentialID, PublicKeyCredential,
+    RegisterPublicKeyCredential, RequestAuthenticationExtensions, RequestChallengeResponse,
 };
 use webauthn_rs::{Webauthn, WebauthnConfig};
 
@@ -109,9 +110,10 @@ impl WebauthnActor {
             Ok(user) => user,
             Err(_) => return Err(WebauthnError::UserNotPresent),
         };
-        let excluded: Option<Vec<CredentialID>> = if user.webauthn_credentials.len() > 0 {
+        let excluded: Option<Vec<CredentialID>> = if user.webauthn.credentials.len() > 0 {
             Some(
-                user.webauthn_credentials
+                user.webauthn
+                    .credentials
                     .iter()
                     .map(|cred| cred.cred_id.clone())
                     .collect(),
@@ -145,15 +147,16 @@ impl WebauthnActor {
             "handle register -> (username: {:?}, reg: {:?})",
             username, reg
         );
+        // TODO: query only required fields
         let user = match db.get_user(&username).await {
             Ok(user) => user,
             Err(_) => return Err(WebauthnError::UserNotPresent),
         };
-        let rs = match user.webauthn_registration_state {
+        let rs = match user.webauthn.registration_state {
             Some(rs) => rs,
             None => return Err(WebauthnError::ChallengeNotFound),
         };
-        let mut ucreds: Vec<Credential> = user.webauthn_credentials;
+        let mut ucreds: Vec<Credential> = user.webauthn.credentials;
         match self
             .wan
             .register_credential(reg, &rs, |cred_id| {
@@ -174,79 +177,63 @@ impl WebauthnActor {
         Ok(())
     }
 
-    /*
     pub async fn challenge_authenticate(
         &self,
-        user: &mut User,
+        db: &mut DB,
+        username: &String,
     ) -> WebauthnResult<RequestChallengeResponse> {
-        println!("handle challenge_authenticate -> {:?}", &user.username);
-
-        let creds = match self
-            .creds
-            .lock()
-            .await
-            .get(&user.username.as_bytes().to_vec())
-        {
-            Some(creds) => Some(creds.iter().map(|(_, v)| v.clone()).collect()),
-            None => None,
+        println!("handle challenge_authenticate -> {:?}", &username);
+        // TODO: query only required fields
+        let user: User = match db.get_user(&username).await {
+            Ok(user) => user,
+            Err(_) => return Err(WebauthnError::UserNotPresent),
+        };
+        if user.webauthn.credentials.is_empty() {
+            return Err(WebauthnError::CredentialRetrievalError);
         }
-        .ok_or(WebauthnError::CredentialRetrievalError)?;
-
+        let creds = user.webauthn.credentials;
         let exts = RequestAuthenticationExtensions::builder()
             .get_cred_blob(true)
             .build();
-
         let (acr, st) = self
             .wan
             .generate_challenge_authenticate_options(creds, Some(exts))?;
-        self.auth_chals
-            .lock()
-            .await
-            .put(user.username.as_bytes().to_vec(), st);
+        match db.save_webauthn_authentication_state(username, &st).await {
+            Ok(()) => (),
+            Err(e) => println!("Error: {:?}", e),
+        }
         println!("complete challenge_authenticate -> {:?}", &acr);
         Ok(acr)
     }
-    */
 
-    /*
     pub async fn authenticate(
         &self,
-        username: &String,
+        db: &mut DB,
+        user: &User,
         lgn: &PublicKeyCredential,
     ) -> WebauthnResult<()> {
         println!(
             "handle authenticate -> (username: {:?}, lgn: {:?})",
-            username,
-            lgn
+            user.username, lgn
         );
-        let username = username.as_bytes().to_vec();
-        let st = self
-            .auth_chals
-            .lock()
-            .await
-            .pop(&username)
-            .ok_or(WebauthnError::ChallengeNotFound)?;
-        let mut creds = self.creds.lock().await;
-        let r = self
-            .wan
-            .authenticate_credential(lgn, &st)
-            .map(|(cred_id, auth_data)| {
-                let _ = match creds.get_mut(&username) {
-                    Some(v) => {
-                        let mut c = v.remove(cred_id).unwrap();
-                        c.counter = auth_data.counter;
-                        v.insert(cred_id.clone(), c);
-                        Ok(())
-                    }
-                    None => {
-                        // Invalid state but not end of world ...
-                        Err(())
-                    }
-                };
-                ()
-            });
-        println!("complete authenticate -> {:?}", &r);
-        r
+        let st = match user.webauthn.authentication_state {
+            Some(ref st) => st,
+            None => return Err(WebauthnError::ChallengeNotFound),
+        };
+        match self.wan.authenticate_credential(lgn, &st) {
+            Ok((cred_id, auth_data)) => {
+                dbg!(&cred_id, &auth_data);
+                match db
+                    .update_webauthn_cred(&user.username, cred_id, &auth_data)
+                    .await
+                {
+                    Ok(()) => (),
+                    Err(_) => return Err(WebauthnError::CredentialPersistenceError),
+                }
+            }
+            Err(_) => return Err(WebauthnError::AuthenticationFailure),
+        }
+        println!("complete authenticate");
+        Ok(())
     }
-    */
 }

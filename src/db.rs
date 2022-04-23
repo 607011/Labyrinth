@@ -5,8 +5,9 @@
 use crate::{auth::Role, b64, error::Error::*, Result};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
+use futures::stream::StreamExt;
 use mongodb::bson::doc;
-use mongodb::options::ClientOptions;
+use mongodb::options::{ClientOptions, FindOneOptions, UpdateOptions};
 use mongodb::{Client, Collection, Database};
 use rand::{distributions::Distribution, Rng};
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,8 @@ use std::convert::Infallible;
 use std::env;
 use std::fmt;
 use warp::Filter;
-use webauthn_rs::proto::Credential;
-use webauthn_rs::RegistrationState;
+use webauthn_rs::proto::{Authentication, AuthenticatorData, Credential, CredentialID};
+use webauthn_rs::{AuthenticationState, RegistrationState};
 
 pub type PinType = u32;
 
@@ -97,7 +98,9 @@ pub struct Room {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SecondFactor {
+    #[serde(rename = "TOTP")]
     Totp,
+    #[serde(rename = "FIDO2")]
     Fido2,
 }
 
@@ -109,13 +112,39 @@ impl SecondFactor {
             _ => SecondFactor::Totp,
         }
     }
+    fn as_str(&self) -> &'static str {
+        match self {
+            SecondFactor::Totp => "TOTP",
+            SecondFactor::Fido2 => "FIDO2",
+        }
+    }
 }
 
 impl fmt::Display for SecondFactor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SecondFactor::Totp => write!(f, "TOTP"),
-            SecondFactor::Fido2 => write!(f, "FIDO2"),
+            SecondFactor::Totp => write!(f, "{}", SecondFactor::Totp.as_str()),
+            SecondFactor::Fido2 => write!(f, "{}", SecondFactor::Fido2.as_str()),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+pub struct WebauthnManagementData {
+    #[serde(default, rename = "registrationState")]
+    pub registration_state: Option<RegistrationState>,
+    #[serde(default)]
+    pub credentials: Vec<Credential>,
+    #[serde(default, rename = "authenticationState")]
+    pub authentication_state: Option<AuthenticationState>,
+}
+
+impl WebauthnManagementData {
+    pub fn new() -> WebauthnManagementData {
+        WebauthnManagementData {
+            registration_state: Option::default(),
+            credentials: Vec::new(),
+            authentication_state: Option::default(),
         }
     }
 }
@@ -128,7 +157,8 @@ pub struct User {
     pub email: String,
     pub role: Role,
     pub hash: String,
-    pub pin: Option<PinType>,
+    #[serde(default)]
+    pub pin: PinType,
     pub activated: bool,
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
@@ -150,16 +180,12 @@ pub struct User {
     #[serde(default)]
     pub awaiting_second_factor: bool,
     #[serde(default)]
-    pub second_factors: Vec<SecondFactor>,
-    #[serde(default)]
     #[serde(with = "b64")]
     pub totp_key: Vec<u8>,
     #[serde(default)]
     pub recovery_keys: Vec<String>,
     #[serde(default)]
-    pub webauthn_registration_state: Option<RegistrationState>,
-    #[serde(default)]
-    pub webauthn_credentials: Vec<Credential>,
+    pub webauthn: WebauthnManagementData,
 }
 
 impl User {
@@ -168,8 +194,8 @@ impl User {
         email: &String,
         role: Role,
         hash: String,
-        second_factor: SecondFactor,
-        pin: Option<PinType>,
+        pin: PinType,
+        totp_key: Vec<u8>,
     ) -> Self {
         User {
             id: ObjectId::new(),
@@ -188,11 +214,9 @@ impl User {
             score: 0,
             in_room: Option::default(),
             awaiting_second_factor: false,
-            second_factors: Vec::from([second_factor]),
-            totp_key: Vec::new(),
+            totp_key: totp_key,
             recovery_keys: Vec::new(),
-            webauthn_registration_state: Option::default(),
-            webauthn_credentials: Vec::new(),
+            webauthn: WebauthnManagementData::new(),
         }
     }
 }
@@ -257,36 +281,129 @@ impl DB {
         self.get_database().collection::<Room>(&self.coll_rooms)
     }
 
-    pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<Option<u32>> {
-        println!("get_num_rooms()");
-        dbg!(game_id);
+    pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<Option<i32>> {
+        println!("get_num_rooms(); game_id = {}", game_id);
         match self
             .get_rooms_coll()
             .count_documents(doc! { "game_id": game_id }, None)
             .await
         {
-            Ok(count) => Ok(Some(count as u32)),
-            Err(_) => Ok(Option::default()),
+            Ok(count) => Ok(Some(count as i32)),
+            Err(_) => return Err(RoomNotFoundError),
         }
     }
 
-    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<u32>> {
-        println!("get_num_riddles()");
-        dbg!(game_id);
-        // XXX: wrong query
-        match self
+    pub async fn get_max_score(&self, game_id: &ObjectId) -> Result<Option<i32>> {
+        println!("get_max_score(); game_id = {}", game_id);
+        let mut cursor: mongodb::Cursor<bson::Document> = match self
             .get_rooms_coll()
-            .distinct("neighbors.riddle_id", doc! { "game_id": game_id }, None)
+            .aggregate(
+                vec![
+                    doc! {
+                        "$match": {
+                            "game_id": game_id,
+                        }
+                    },
+                    doc! {
+                        "$unwind": "$neighbors",
+                    },
+                    doc! {
+                        "$group": {
+                            "_id": "$neighbors.riddle_id",
+                        }
+                    },
+                    doc! {
+                       "$lookup": {
+                            "from": "riddles",
+                            "localField": "_id",
+                            "foreignField": "_id",
+                            "as": "riddle"
+                        }
+                    },
+                    doc! {
+                        "$project": {
+                            "score": doc! { "$arrayElemAt": [ "$riddle.difficulty", 0u32 ] }
+                        }
+                    },
+                    doc! {
+                        "$group": {
+                            "_id": bson::Bson::Null,
+                            "total": doc! { "$sum": "$score" }
+                        }
+                    },
+                ],
+                None,
+            )
             .await
         {
-            Ok(result) => Ok(Some(result.len() as u32)),
-            Err(_) => Ok(Option::default()),
-        }
+            Ok(cursor) => cursor,
+            Err(e) => return Err(MongoError(e)),
+        };
+        let result = match cursor.next().await {
+            Some(result) => result,
+            None => return Ok(Option::default()),
+        };
+        let doc: bson::Document = match result {
+            Ok(doc) => doc,
+            Err(e) => return Err(MongoError(e)),
+        };
+        let total = match doc.get("total") {
+            Some(total) => total.as_i32(),
+            None => return Ok(Option::default()),
+        };
+        Ok(total)
+    }
+
+    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<i32>> {
+        println!("get_num_riddles(); game_id = {}", game_id);
+        let mut cursor: mongodb::Cursor<bson::Document> = match self
+            .get_rooms_coll()
+            .aggregate(
+                vec![
+                    doc! {
+                        "$match": {
+                            "game_id": game_id,
+                        }
+                    },
+                    doc! {
+                        "$unwind": "$neighbors",
+                    },
+                    doc! {
+                        "$group": {
+                            "_id": "$neighbors.riddle_id",
+                        }
+                    },
+                    doc! {
+                        "$group": {
+                            "_id": bson::Bson::Null,
+                            "count": { "$sum": 1i32 }
+                        }
+                    },
+                ],
+                None,
+            )
+            .await
+        {
+            Ok(cursor) => cursor,
+            Err(e) => return Err(MongoError(e)),
+        };
+        let result = match cursor.next().await {
+            Some(result) => result,
+            None => return Ok(Option::default()),
+        };
+        let doc: bson::Document = match result {
+            Ok(doc) => doc,
+            Err(e) => return Err(MongoError(e)),
+        };
+        let result = match doc.get("count") {
+            Some(count) => count.as_i32(),
+            None => return Ok(Option::default()),
+        };
+        Ok(result)
     }
 
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
-        println!("get_riddle_by_level()");
-        dbg!(level);
+        println!("get_riddle_by_level(); level = {}", level);
         let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "level": level }, None)
@@ -308,7 +425,7 @@ impl DB {
     }
 
     pub async fn get_riddle_by_oid(&self, oid: &ObjectId) -> Result<Option<Riddle>> {
-        println!("get_riddle_by_oid(\"{:?}\")", oid);
+        println!("get_riddle_by_oid(); oid = {}", oid);
         let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "_id": oid }, None)
@@ -333,6 +450,7 @@ impl DB {
         &self,
         riddle_id: &ObjectId,
         username: &String,
+        options: impl Into<Option<FindOneOptions>>,
     ) -> Result<Option<Riddle>> {
         let user: Option<User> = match self
             .get_users_coll()
@@ -341,7 +459,7 @@ impl DB {
                     "username": username,
                     "solved": riddle_id,
                 },
-                None,
+                options,
             )
             .await
         {
@@ -358,7 +476,7 @@ impl DB {
         Ok(riddle)
     }
 
-    pub async fn is_riddle_accessible(
+    pub async fn riddle_accessibility(
         &self,
         oid: &ObjectId,
         username: &String,
@@ -409,7 +527,7 @@ impl DB {
     }
 
     pub async fn get_user(&self, username: &String) -> Result<User> {
-        println!("get_user(\"{}\")", username);
+        println!("get_user(); username = {}", username);
         let user: Option<User> = match self
             .get_users_coll()
             .find_one(doc! { "username": username }, None)
@@ -428,7 +546,7 @@ impl DB {
     }
 
     pub async fn get_room(&self, oid: &ObjectId) -> Result<Room> {
-        println!("get_room({})", oid);
+        println!("get_room(); oid = {}", oid);
         let room: Option<Room> = match self
             .get_rooms_coll()
             .find_one(doc! { "_id": oid }, None)
@@ -448,7 +566,10 @@ impl DB {
         opposite: &String,
         riddle_id: &bson::oid::ObjectId,
     ) -> Result<Room> {
-        println!("get_room_behind(\"{}\", \"{}\")", opposite, riddle_id);
+        println!(
+            "get_room_behind(); opposite = {}, riddle_id = {}",
+            opposite, riddle_id
+        );
         let room: Option<Room> = match self
             .get_rooms_coll()
             .find_one(
@@ -508,7 +629,11 @@ impl DB {
             .update_one(
                 doc! { "_id": user.id, "activated": true },
                 doc! {
-                    "$set": { "solved": solutions, "level": user.level, "score": user.score },
+                    "$set": {
+                        "solved": solutions,
+                        "level": user.level,
+                        "score": user.score
+                    },
                 },
                 None,
             )
@@ -519,13 +644,43 @@ impl DB {
         }
     }
 
-    pub async fn set_user_awaiting_2fa(&mut self, user: &User) -> Result<()> {
+    pub async fn update_webauthn_cred(
+        &self,
+        username: &String,
+        cred_id: &CredentialID,
+        auth_data: &AuthenticatorData<Authentication>,
+    ) -> Result<()> {
+        let update_options = UpdateOptions::builder()
+            .array_filters(vec![doc! {
+                "elem.cred_id": bson::to_bson(cred_id).unwrap(),
+            }])
+            .build();
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "username": username, "activated": true },
+                doc! {
+                    "$set": {
+                        "webauthn.credentials.$[elem].counter": auth_data.counter,
+                        "webauthn.credentials.$[elem].verified": auth_data.user_verified,
+                    }
+                },
+                update_options,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
+    }
+
+    pub async fn set_user_awaiting_2fa(&mut self, user: &User, awaiting: bool) -> Result<()> {
         match self
             .get_users_coll()
             .update_one(
                 doc! { "_id": user.id, "activated": true },
                 doc! {
-                    "$set": { "awaiting_second_factor": true },
+                    "$set": { "awaiting_second_factor": awaiting },
                 },
                 None,
             )
@@ -551,8 +706,7 @@ impl DB {
                 doc! { "username": username, "activated": true },
                 doc! {
                     "$set": {
-                        "awaiting_second_factor": true,
-                        "webauthn_registration_state": Some(bson::to_bson(rs).unwrap()),
+                        "webauthn.registrationState": Some(bson::to_bson(rs).unwrap()),
                     },
                 },
                 None,
@@ -577,8 +731,34 @@ impl DB {
                 doc! { "username": username, "activated": true },
                 doc! {
                     "$set": {
-                        "awaiting_second_factor": true,
-                        "webauthn_credentials": Some(bson::to_bson(creds).unwrap()),
+                        "webauthn.credentials": Some(bson::to_bson(creds).unwrap()),
+                    },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MongoQueryError(e)),
+        }
+    }
+
+    pub async fn save_webauthn_authentication_state(
+        &self,
+        username: &String,
+        st: &AuthenticationState,
+    ) -> Result<()> {
+        println!(
+            "save_webauthn_authentication_state(); username = {}, as = {:?}",
+            username, st
+        );
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "username": username, "activated": true },
+                doc! {
+                    "$set": {
+                        "webauthn.authenticationState": Some(bson::to_bson(st).unwrap()),
                     },
                 },
                 None,
@@ -663,13 +843,12 @@ impl DB {
             }
             None => return Err(RoomNotFoundError),
         };
-        let query: bson::Document = doc! { "username": user.username.clone(), "activated": false };
         user.activated = true;
         user.registered = Some(Utc::now());
         user.last_login = Some(Utc::now());
         user.in_room = Some(first_room_id);
         user.rooms_entered.push(first_room_id);
-        user.pin = Option::default();
+        user.pin = 0;
         user.recovery_keys = (0..10)
             .map(|_| {
                 let a: String = rand::thread_rng()
@@ -695,7 +874,6 @@ impl DB {
                 a + "-" + &b + "-" + &c + "-" + &d
             })
             .collect();
-        user.totp_key = rand::thread_rng().gen::<[u8; 32]>().to_vec();
         let modification: bson::Document = doc! {
             "$set": {
                 "activated": user.activated,
@@ -703,7 +881,6 @@ impl DB {
                 "last_login": Utc::now().timestamp() as u32,
                 "in_room": first_room_id,
                 "rooms_entered": &user.rooms_entered,
-                "totp_key": base64::encode(&user.totp_key),
                 "recovery_keys": &user.recovery_keys,
             },
             "$unset": {
@@ -712,7 +889,11 @@ impl DB {
         };
         match self
             .get_users_coll()
-            .update_one(query, modification, None)
+            .update_one(
+                doc! { "username": user.username.clone(), "activated": false },
+                modification,
+                None,
+            )
             .await
         {
             Ok(_) => {
