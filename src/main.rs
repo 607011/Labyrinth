@@ -527,18 +527,18 @@ pub async fn debriefing_get_by_riddle_id_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("debriefing_get_by_riddle_id_handler() {}", &riddle_id_str);
+    println!(
+        "debriefing_get_by_riddle_id_handler(); riddle_id = {}, username = {}",
+        &riddle_id_str, &username
+    );
     let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let query_options: FindOneOptions = FindOneOptions::builder()
-        .sort(doc! { "debriefing": 1 })
+    let _query_options: FindOneOptions = FindOneOptions::builder()
+        .projection(doc! { "debriefing": 1 })
         .build();
-    let solved_riddle: Option<Riddle> = match db
-        .get_riddle_if_solved(&oid, &username, query_options)
-        .await
-    {
+    let solved_riddle: Option<Riddle> = match db.get_riddle_if_solved(&oid, &username, None).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
     };
