@@ -452,6 +452,7 @@ impl DB {
         username: &String,
         options: impl Into<Option<FindOneOptions>>,
     ) -> Result<Option<Riddle>> {
+        
         let user: Option<User> = match self
             .get_users_coll()
             .find_one(

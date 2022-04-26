@@ -135,6 +135,11 @@ pub struct UserTotpRequest {
     pub totp: String,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct RiddleSolveRequest {
+    pub solution: String,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RoomResponse {
     pub ok: bool,
@@ -453,13 +458,16 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
 }
 
 pub async fn riddle_solve_handler(
-    riddle_id_str: String,
-    solution: String,
+    riddle_id_str: OidString,
+    body: RiddleSolveRequest,
     username: String,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    let solution = url_escape::decode(&solution);
-    println!("riddle_solve_handler() {} {}", &riddle_id_str, &solution);
+    let solution = url_escape::decode(&body.solution);
+    println!(
+        "riddle_solve_handler(); riddle_id = {}, solution = {}",
+        &riddle_id_str, &solution
+    );
     let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -997,20 +1005,43 @@ fn generate_otp_qrcode(username: &String, totp_key: &Vec<u8>) -> Result<(String,
     let totp_qrcode: Vec<u8> =
         match qrcode_generator::to_png_to_vec(&otp_str, QrCodeEcc::Medium, 256) {
             Ok(code) => code,
-            Err(e) => {
-                dbg!(&e);
-                return Err(Error::TotpQrCodeGenerationError);
-            }
+            Err(_) => return Err(Error::TotpQrCodeGenerationError),
         };
     Ok((b32_otp_secret, totp_qrcode))
 }
 
+pub async fn user_totp_disable_handler(username: String, db: DB) -> WebResult<impl Reply> {
+    println!("user_totp_disable_handler(); username = {}", &username);
+    match db
+        .get_users_coll()
+        .update_one(
+            doc! { "username": username.clone(), "activated": true },
+            doc! {
+                "$unset": {
+                    "totp_key": 0,
+                },
+            },
+            None,
+        )
+        .await
+    {
+        Ok(_) => {
+            println!("Updated {}.", &username);
+        }
+        Err(e) => {
+            println!("Error: update failed ({:?})", &e);
+            return Err(reject::custom(Error::MongoQueryError(e)));
+        }
+    }
+    let reply: warp::reply::Json = warp::reply::json(&json!(&StatusResponse {
+        ok: true,
+        message: Option::default(),
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
 pub async fn user_totp_enable_handler(username: String, db: DB) -> WebResult<impl Reply> {
     println!("user_totp_enable_handler(); username = {}", &username);
-    let user: User = match db.get_user(&username).await {
-        Ok(user) => user,
-        Err(e) => return Err(reject::custom(e)),
-    };
     let totp_key: Vec<u8> = rand::thread_rng().gen::<[u8; 32]>().to_vec();
     match db
         .get_users_coll()
@@ -1026,14 +1057,14 @@ pub async fn user_totp_enable_handler(username: String, db: DB) -> WebResult<imp
         .await
     {
         Ok(_) => {
-            println!("Updated {}.", &user.username);
+            println!("Updated {}.", &username);
         }
         Err(e) => {
             println!("Error: update failed ({:?})", &e);
             return Err(reject::custom(Error::MongoQueryError(e)));
         }
     }
-    let (secret, totp_qrcode) = match generate_otp_qrcode(&user.username, &totp_key) {
+    let (secret, totp_qrcode) = match generate_otp_qrcode(&username, &totp_key) {
         Ok((secret, qrcode)) => (secret, qrcode),
         Err(e) => return Err(reject::custom(e)),
     };
@@ -1252,13 +1283,6 @@ pub async fn webauthn_register_finish_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     println!("webauthn_register_finish_handler() {:?}", &body);
-    let user: User = match db.get_user(&username).await {
-        Ok(user) => user,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    if !user.awaiting_second_factor {
-        return Err(reject::custom(Error::PointlessFido2Error));
-    }
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     match wa_actor.register(&mut db, &username, &body).await {
         Ok(()) => (),
@@ -1390,29 +1414,33 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(user_totp_enable_handler);
-    let webauthn_register_start_route =
-        warp::path!("user" / "webauthn" / "register" / "start" /  /* username */String)
-            .and(warp::post())
-            .and(with_db(db.clone()))
-            .and_then(webauthn_register_start_handler);
-    let webauthn_register_finish_route =
-        warp::path!("user" / "webauthn" / "register" / "finish" /  /* username */String)
-            .and(warp::post())
-            .and(warp::body::json())
-            .and(with_db(db.clone()))
-            .and_then(webauthn_register_finish_handler);
-    let webauthn_login_start_route =
-        warp::path!("user" / "webauthn" / "login" / "start" /  /* username */String)
-            .and(warp::post())
-            .and(with_db(db.clone()))
-            .and_then(webauthn_login_start_handler);
+    let user_totp_disable_route = warp::path!("user" / "totp" / "disable")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(user_totp_disable_handler);
+    let webauthn_login_start_route = warp::path!("user" / "webauthn" / "login" / "start" / String)
+        .and(warp::post())
+        .and(with_db(db.clone()))
+        .and_then(webauthn_login_start_handler);
     let webauthn_login_finish_route =
-        warp::path!("user" / "webauthn" / "login" / "finish" /  /* username */String)
+        warp::path!("user" / "webauthn" / "login" / "finish" / String)
             .and(warp::post())
             .and(warp::body::json())
             .and(with_db(db.clone()))
             .and_then(webauthn_login_finish_handler);
     /* Routes accessible only to authorized users */
+    let webauthn_register_start_route = warp::path!("user" / "webauthn" / "register" / "start")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(webauthn_register_start_handler);
+    let webauthn_register_finish_route = warp::path!("user" / "webauthn" / "register" / "finish")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(warp::body::json())
+        .and(with_db(db.clone()))
+        .and_then(webauthn_register_finish_handler);
     let user_auth_route = warp::path!("user" / "auth")
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -1427,13 +1455,14 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(riddle_get_oid_handler);
-    let debriefing_get_by_riddle_id_route = warp::path!("debriefing" / OidString)
+    let debriefing_get_by_riddle_id_route = warp::path!("riddle" / "debriefing" / OidString)
         .and(warp::get())
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(debriefing_get_by_riddle_id_handler);
-    let riddle_solve_route = warp::path!("riddle" / "solve" / OidString / "with" / String)
-        .and(warp::get())
+    let riddle_solve_route = warp::path!("riddle" / "solve" / OidString)
+        .and(warp::post())
+        .and(warp::body::json())
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(riddle_solve_handler);
@@ -1468,6 +1497,7 @@ async fn main() -> Result<()> {
         .or(user_auth_route)
         .or(user_login_route)
         .or(user_totp_enable_route)
+        .or(user_totp_disable_route)
         .or(user_totp_login_route)
         .or(user_register_route)
         .or(user_activation_route)
