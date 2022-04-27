@@ -359,7 +359,10 @@ fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
 }
 
 pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebResult<impl Reply> {
-    println!("go_handler(); direction = {}; username = {}", &direction_str, &username);
+    println!(
+        "go_handler(); direction = {}; username = {}",
+        &direction_str, &username
+    );
     let mut user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
@@ -1149,11 +1152,13 @@ pub async fn user_activation_handler(
 }
 
 pub async fn user_registration_handler(
-    body: UserRegistrationRequest,
+    mut body: UserRegistrationRequest,
     mut db: DB,
 ) -> WebResult<impl Reply> {
+    let password: String = body.password;
+    body.password = "******".to_string();
     println!("user_registration_handler(); body = {:?}", &body);
-    if body.password.len() < 8 || bad_password(&body.password) {
+    if password.len() < 8 || bad_password(&password) {
         return Err(reject::custom(Error::UnsafePasswordError));
     }
     if !RE_MAIL.is_match(&body.email.as_str()) {
@@ -1179,7 +1184,7 @@ pub async fn user_registration_handler(
         hash_length: 32,
     };
     let salt: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
-    let hash: String = match argon2::hash_encoded(body.password.as_bytes(), &salt, &config) {
+    let hash: String = match argon2::hash_encoded(password.as_bytes(), &salt, &config) {
         Ok(hash) => hash,
         Err(_) => return Err(reject::custom(Error::HashingError)),
     };
@@ -1259,7 +1264,10 @@ pub async fn webauthn_register_start_handler(
     username: String,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!("webauthn_register_start_handler(); username = {}", &username);
+    println!(
+        "webauthn_register_start_handler(); username = {}",
+        &username
+    );
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let ccr = match wa_actor.challenge_register(&mut db, &username).await {
         Ok(ccr) => ccr,
