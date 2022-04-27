@@ -59,6 +59,7 @@ pub fn webauthn_default_config() -> webauthn::WebauthnVolatileConfig {
 
 lazy_static! {
     static ref BAD_HASHES: Vec<Vec<u8>> = {
+        print!("Loading password hashes ... ");
         let file = &std::fs::File::open("toppass8-md5.bin").unwrap();
         let chunk_size: usize = 128 / 8;
         let mut hashes: Vec<Vec<u8>> = Vec::new();
@@ -76,6 +77,7 @@ lazy_static! {
                 break;
             }
         }
+        println!("Done.");
         hashes
     };
     static ref OPPOSITE: HashMap<String, String> = HashMap::from([
@@ -91,6 +93,7 @@ lazy_static! {
 
 fn bad_password(password: &String) -> bool {
     let hash = md5::compute(password.as_bytes());
+    // XXX: Don't search in memory, search in file, so that huge MD5 lists can be used
     match BAD_HASHES.binary_search(&Vec::from(*hash)) {
         Ok(_hash) => true,
         _ => false,
@@ -356,7 +359,7 @@ fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
 }
 
 pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebResult<impl Reply> {
-    println!("go_handler() {} {}", &direction_str, &username);
+    println!("go_handler(); direction = {}; username = {}", &direction_str, &username);
     let mut user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
@@ -568,7 +571,7 @@ pub async fn riddle_get_oid_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("riddle_get_oid_handler() {}", &riddle_id_str);
+    println!("riddle_get_oid_handler(); riddle_id = {}", &riddle_id_str);
     let oid = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -586,7 +589,7 @@ pub async fn riddle_get_oid_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    println!("got riddle level {}", riddle.level);
+    println!("got riddle w/ level = {}", riddle.level);
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
         for file in files.iter() {
@@ -655,7 +658,7 @@ pub async fn game_stats_handler(
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("game_stats_handler() {}", &game_id_str);
+    println!("game_stats_handler(); game_id = {}", &game_id_str);
     let game_id: bson::oid::ObjectId = match ObjectId::parse_str(game_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -697,7 +700,7 @@ pub async fn riddle_get_by_level_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    println!("got riddle {}", riddle.level);
+    println!("got riddle w/ level = {}", riddle.level);
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
         for file in files.iter() {
@@ -741,12 +744,12 @@ pub async fn riddle_get_by_level_handler(
 }
 
 pub async fn user_authentication_handler(username: String) -> WebResult<impl Reply> {
-    println!("user_authentication_handler() {}", &username);
+    println!("user_authentication_handler(); username = {}", &username);
     Ok(StatusCode::OK)
 }
 
 pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
-    println!("cheat_handler() {}", username);
+    println!("cheat_handler(); username = {}", username);
     if true {
         return Err(reject::custom(Error::CheatError));
     }
@@ -759,7 +762,7 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user {} {}", &user.username, &user.email);
+    println!("got user {} <{}>", &user.username, &user.email);
     let in_room: bson::oid::ObjectId = match user.in_room {
         Some(room) => room,
         None => return Err(reject::custom(Error::RoomNotFoundError)),
@@ -886,7 +889,7 @@ pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebRe
 }
 
 pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
-    println!("user_login_handler() {}", &body.username);
+    println!("user_login_handler(); username = {}", &body.username);
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
@@ -1107,19 +1110,19 @@ pub async fn user_activation_handler(
         Err(e) => return Err(reject::custom(e)),
     };
     let mut configured_2fa: Vec<SecondFactor> = Vec::new();
-    let (totp, jwt) = match user.totp_key.is_empty() {
-        true => (Option::default(), Option::default()),
+    let jwt: Option<String> = match auth::create_jwt(&user.username, &user.role) {
+        Ok(jwt) => Some(jwt),
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let totp = match user.totp_key.is_empty() {
+        true => Option::default(),
         false => {
             configured_2fa.push(SecondFactor::Totp);
             let (secret, totp_qrcode) = match generate_otp_qrcode(&user.username, &user.totp_key) {
                 Ok((secret, qrcode)) => (secret, qrcode),
                 Err(e) => return Err(reject::custom(e)),
             };
-            let jwt: Option<String> = match auth::create_jwt(&user.username, &user.role) {
-                Ok(jwt) => Some(jwt),
-                Err(e) => return Err(reject::custom(e)),
-            };
-            (Some(TotpResponseRaw::new(totp_qrcode, secret)), jwt)
+            Some(TotpResponseRaw::new(totp_qrcode, secret))
         }
     };
     let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
@@ -1149,7 +1152,7 @@ pub async fn user_registration_handler(
     body: UserRegistrationRequest,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!("user_registration_handler() {:?}", &body);
+    println!("user_registration_handler(); body = {:?}", &body);
     if body.password.len() < 8 || bad_password(&body.password) {
         return Err(reject::custom(Error::UnsafePasswordError));
     }
@@ -1256,7 +1259,7 @@ pub async fn webauthn_register_start_handler(
     username: String,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!("webauthn_register_start_handler() {}", &username);
+    println!("webauthn_register_start_handler(); username = {}", &username);
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let ccr = match wa_actor.challenge_register(&mut db, &username).await {
         Ok(ccr) => ccr,
@@ -1277,7 +1280,7 @@ pub async fn webauthn_register_finish_handler(
     body: RegisterPublicKeyCredential,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!("webauthn_register_finish_handler() {:?}", &body);
+    println!("webauthn_register_finish_handler(); body = {:?}", &body);
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     match wa_actor.register(&mut db, &username, &body).await {
         Ok(()) => (),
@@ -1291,7 +1294,7 @@ pub async fn webauthn_register_finish_handler(
 }
 
 pub async fn webauthn_login_start_handler(username: String, mut db: DB) -> WebResult<impl Reply> {
-    println!("webauthn_login_start_handler() {}", &username);
+    println!("webauthn_login_start_handler(); username = {}", &username);
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let rcr = match wa_actor.challenge_authenticate(&mut db, &username).await {
         Ok(rcr) => rcr,
@@ -1380,6 +1383,9 @@ pub async fn webauthn_login_finish_handler(
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
+    const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
+    const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+    println!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
     let db = DB::init().await?;
     let root = warp::path::end().map(|| "Labyrinth API root.");
     /* Routes accessible to all users */
@@ -1506,9 +1512,6 @@ async fn main() -> Result<()> {
         .or(warp::any().and(warp::options()).map(warp::reply))
         .recover(error::handle_rejection);
 
-    const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
-    const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
-    println!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
     let host = env::var("API_HOST").expect("API_HOST is not in .env file");
     let addr: SocketAddr = host.parse().expect("Cannot parse host address");
     println!("Listening on http://{}", host);
