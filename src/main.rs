@@ -1256,9 +1256,6 @@ pub async fn webauthn_register_finish_handler(
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    if !user.awaiting_second_factor {
-        return Err(reject::custom(Error::PointlessFido2Error));
-    }
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     match wa_actor.register(&mut db, &username, &body).await {
         Ok(()) => (),
