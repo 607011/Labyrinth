@@ -1149,7 +1149,7 @@ pub async fn user_registration_handler(
     body: UserRegistrationRequest,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!("user_register_handler() {:?}", &body);
+    println!("user_registration_handler() {:?}", &body);
     if body.password.len() < 8 || bad_password(&body.password) {
         return Err(reject::custom(Error::UnsafePasswordError));
     }
@@ -1257,11 +1257,6 @@ pub async fn webauthn_register_start_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     println!("webauthn_register_start_handler() {}", &username);
-    let user: User = match db.get_user(&username).await {
-        Ok(user) => user,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    println!("got user {:?}", user);
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let ccr = match wa_actor.challenge_register(&mut db, &username).await {
         Ok(ccr) => ccr,
@@ -1283,10 +1278,6 @@ pub async fn webauthn_register_finish_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     println!("webauthn_register_finish_handler() {:?}", &body);
-    let user: User = match db.get_user(&username).await {
-        Ok(user) => user,
-        Err(e) => return Err(reject::custom(e)),
-    };
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     match wa_actor.register(&mut db, &username, &body).await {
         Ok(()) => (),
