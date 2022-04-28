@@ -88,7 +88,8 @@ lazy_static! {
         //(String::from("u"), String::from("d")),
         //(String::from("d"), String::from("u")),
     ]);
-    static ref RE_MAIL: Regex = Regex::new(r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)").unwrap();
+    static ref RE_USERNAME: Regex = Regex::new(r"^\w+$").unwrap();
+    static ref RE_MAIL: Regex = Regex::new(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$").unwrap();
 }
 
 fn bad_password(password: &String) -> bool {
@@ -1160,6 +1161,9 @@ pub async fn user_registration_handler(
     println!("user_registration_handler(); body = {:?}", &body);
     if password.len() < 8 || bad_password(&password) {
         return Err(reject::custom(Error::UnsafePasswordError));
+    }
+    if !RE_USERNAME.is_match(&body.username.as_str()) {
+        return Err(reject::custom(Error::InvalidUsernameError));
     }
     if !RE_MAIL.is_match(&body.email.as_str()) {
         return Err(reject::custom(Error::InvalidEmailError));

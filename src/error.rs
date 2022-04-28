@@ -31,6 +31,8 @@ pub enum Error {
     TotpQrCodeGenerationError,
     #[error("user not found")]
     UserNotFoundError,
+    #[error("username is not valid")]
+    InvalidUsernameError,
     #[error("username not available")]
     UsernameNotAvailableError,
     #[error("combination of username and mail address is not valid")]
