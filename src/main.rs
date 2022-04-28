@@ -1221,7 +1221,7 @@ pub async fn user_registration_handler(
     let email: lettre::Message = match Message::builder()
         .header(lettre::message::header::ContentType::TEXT_PLAIN)
         .from(
-            "Labyrinth Mailer <no-reply@ersatzworld.net>"
+            "Labyrinth Mailer <nirwana@raetselonkel.de>"
                 .parse()
                 .unwrap(),
         )
