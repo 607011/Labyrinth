@@ -8,3 +8,4 @@ Pipfile.lock
 .env
 linux/
 toppass8-md5.bin
+toppass-huge.md5
