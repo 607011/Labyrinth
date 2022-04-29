@@ -8,13 +8,12 @@ use auth::{with_auth, Role};
 use base32;
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Direction, PinType, Riddle, Room, SecondFactor, User, DB};
+use db::{with_db, Direction, PinType, Riddle, RiddleAttempt, Room, SecondFactor, User, DB};
 use dotenv::dotenv;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
 use mongodb::bson::doc;
-use mongodb::options::FindOneOptions;
 use mongodb_gridfs::{options::GridFSBucketOptions, GridFSBucket};
 use qrcode_generator::QrCodeEcc;
 use rand::Rng;
@@ -25,7 +24,8 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::convert::From;
 use std::env;
-use std::io::Read;
+use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use totp_lite::{totp_custom, Sha1};
@@ -58,28 +58,6 @@ pub fn webauthn_default_config() -> webauthn::WebauthnVolatileConfig {
 }
 
 lazy_static! {
-    static ref BAD_HASHES: Vec<Vec<u8>> = {
-        print!("Loading password hashes ... ");
-        let file = &std::fs::File::open("toppass8-md5.bin").unwrap();
-        let chunk_size: usize = 128 / 8;
-        let mut hashes: Vec<Vec<u8>> = Vec::new();
-        loop {
-            let mut chunk = Vec::with_capacity(chunk_size);
-            let n = file
-                .take(chunk_size as u64)
-                .read_to_end(&mut chunk)
-                .unwrap();
-            if n == 0 {
-                break;
-            }
-            hashes.push(chunk);
-            if n < chunk_size {
-                break;
-            }
-        }
-        println!("Done.");
-        hashes
-    };
     static ref OPPOSITE: HashMap<String, String> = HashMap::from([
         (String::from("n"), String::from("s")),
         (String::from("e"), String::from("w")),
@@ -92,13 +70,53 @@ lazy_static! {
     static ref RE_MAIL: Regex = Regex::new(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$").unwrap();
 }
 
-fn bad_password(password: &String) -> bool {
-    let hash = md5::compute(password.as_bytes());
-    // XXX: Don't search in memory, search in file, so that huge MD5 lists can be used
-    match BAD_HASHES.binary_search(&Vec::from(*hash)) {
-        Ok(_hash) => true,
-        _ => false,
+#[repr(C)]
+union MD5Hash {
+    hash: md5::Digest,
+    value: u128,
+}
+
+fn is_bad_password(password: &String) -> std::result::Result<bool, std::io::Error> {
+    let hash = MD5Hash {
+        hash: md5::compute(password.as_bytes()),
+    };
+    let given_hash_raw = unsafe { MD5Hash { hash: hash.hash } };
+    let given_hash = unsafe { u128::from_be(given_hash_raw.value) };
+    let md5_filename = env::var("BAD_PASSWORDS_MD5")
+        .expect("environment variable BAD_PASSWORDS_MD5 has not been set");
+    let metadata = fs::metadata(&md5_filename).expect(&format!(
+        "cannot read metadata of MD5 hash file '{}'",
+        &md5_filename
+    ));
+    let mut lo: u64 = 0;
+    let mut hi: u64 = metadata.len();
+    const MD5_SIZE: u64 = 16;
+    let mut f = &fs::File::open(&md5_filename)
+        .expect(&format!("cannot read MD5 hash file '{}'", &md5_filename));
+    let mut md5 = MD5Hash { value: 0 };
+    while lo <= hi {
+        let mut pos: u64 = (lo + hi) / 2;
+        pos -= pos % MD5_SIZE;
+        match f.seek(SeekFrom::Start(pos)) {
+            Ok(_pos) => (),
+            Err(e) => return Err(e),
+        }
+        unsafe {
+            match f.read_exact(&mut *md5.hash) {
+                Ok(_) => (),
+                Err(e) => return Err(e),
+            }
+            let md5_value = u128::from_le(md5.value);
+            if given_hash > md5_value {
+                lo = pos + MD5_SIZE;
+            } else if given_hash < md5_value {
+                hi = pos - MD5_SIZE;
+            } else {
+                return Ok(true);
+            }
+        }
     }
+    Ok(false)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -225,7 +243,7 @@ pub struct UserWhoamiResponse {
     pub level: u32,
     pub score: u32,
     pub in_room: RoomResponse,
-    pub solved: Vec<ObjectId>,
+    pub solved: Vec<RiddleAttempt>,
     pub rooms_entered: Vec<ObjectId>,
     pub jwt: Option<String>,
     pub totp: Option<TotpResponseRaw>,
@@ -359,6 +377,24 @@ fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
     warp::reply::with_status(reply, StatusCode::OK)
 }
 
+async fn get_room_by_id(room_id: &ObjectId, db: &DB) -> Result<RoomResponse> {
+    let room_response = match db.get_room(room_id).await {
+        Ok(room) => RoomResponse {
+            ok: true,
+            message: Option::default(),
+            id: room.id,
+            number: room.number,
+            coords: room.coords,
+            neighbors: room.neighbors,
+            game_id: room.game_id,
+            entry: room.entry,
+            exit: room.exit,
+        },
+        Err(e) => return Err(e),
+    };
+    Ok(room_response)
+}
+
 pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebResult<impl Reply> {
     println!(
         "go_handler(); direction = {}; username = {}",
@@ -390,11 +426,14 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         }
         None => return Err(reject::custom(Error::NeighborNotFoundError)),
     };
-    let riddle_id: &bson::oid::ObjectId =
-        match user.solved.iter().find(|&&s| s == direction.riddle_id) {
-            Some(riddle_id) => riddle_id,
-            None => return Err(reject::custom(Error::RiddleNotSolvedError)),
-        };
+    let riddle_id: bson::oid::ObjectId = match user
+        .solved
+        .iter()
+        .find(|&s| s.riddle_id == direction.riddle_id)
+    {
+        Some(riddle_attempt) => riddle_attempt.riddle_id,
+        None => return Err(reject::custom(Error::RiddleNotSolvedError)),
+    };
     let opposite: &String = &OPPOSITE[&direction.direction];
     let room_behind: Room = match db.get_room_behind(&opposite, &riddle_id).await {
         Ok(room_behind) => room_behind,
@@ -501,8 +540,19 @@ pub async fn riddle_solve_handler(
         None => return Err(reject::custom(Error::UserNotFoundError)),
     };
     if solved {
-        let mut solutions: Vec<bson::oid::ObjectId> = user.solved.clone();
-        solutions.push(riddle.id);
+        let mut solutions: Vec<RiddleAttempt> = user.solved.clone();
+        let riddle_attempt = match user.current_riddle_attempt {
+            Some(ref riddle_attempt) => riddle_attempt,
+            None => return Err(reject::custom(Error::RiddleHasNotBeenSeenByUser)),
+        };
+        if riddle_attempt.t0.is_none() {
+            return Err(reject::custom(Error::RiddleHasNotBeenSeenByUser));
+        }
+        solutions.push(RiddleAttempt {
+            riddle_id: riddle.id,
+            t0: riddle_attempt.t0,
+            t_solved: Some(Utc::now()),
+        });
         user.level = riddle.level.max(user.level);
         user.score += riddle.difficulty;
         match db.set_user_solved(&solutions, &user).await {
@@ -515,7 +565,7 @@ pub async fn riddle_solve_handler(
             }
         }
     } else {
-        user.score -= (riddle.difficulty / 2).max(1);
+        user.score -= riddle.deduction.unwrap_or(0);
         match db.rewrite_user_score(&user).await {
             Ok(()) => {
                 println!("User updated.");
@@ -550,9 +600,6 @@ pub async fn debriefing_get_by_riddle_id_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let _query_options: FindOneOptions = FindOneOptions::builder()
-        .projection(doc! { "debriefing": 1 })
-        .build();
     let solved_riddle: Option<Riddle> = match db.get_riddle_if_solved(&oid, &username, None).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
@@ -580,7 +627,7 @@ pub async fn riddle_get_oid_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let (riddle_id, _user, message) = db.riddle_accessibility(&oid, &username).await;
+    let (riddle_id, user, message) = db.riddle_accessibility(&oid, &username).await;
     let riddle_id: bson::oid::ObjectId = match riddle_id {
         Some(riddle_id) => riddle_id,
         None => return Ok(err_response(message)),
@@ -593,6 +640,39 @@ pub async fn riddle_get_oid_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
+    let mut user = match user {
+        Some(user) => user,
+        None => return Err(reject::custom(Error::UserNotAssociatedWithRiddle)),
+    };
+    let riddle_attempt = RiddleAttempt {
+        riddle_id,
+        t0: Some(Utc::now()),
+        t_solved: Option::default(),
+    };
+    user.current_riddle_attempt = Some(riddle_attempt);
+    dbg!(&user.current_riddle_attempt);
+    match db
+        .get_users_coll()
+        .update_one(
+            doc! { "username": username.clone() },
+            doc! {
+                "$set": {
+                    "current_riddle_attempt": Some(bson::to_bson(&riddle_attempt).unwrap()),
+                },
+            },
+            None,
+        )
+        .await
+    {
+        Ok(_) => {
+            println!("Updated current_riddle_attempt of user '{}'.", &username);
+        }
+        Err(e) => {
+            println!("Error: update failed ({:?})", &e);
+            return Err(reject::custom(Error::MongoQueryError(e)));
+        }
+    }
+
     println!("got riddle w/ level = {}", riddle.level);
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
@@ -767,22 +847,12 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
         Err(e) => return Err(reject::custom(e)),
     };
     println!("got user {} <{}>", &user.username, &user.email);
-    let in_room: bson::oid::ObjectId = match user.in_room {
+    let in_room: ObjectId = match user.in_room {
         Some(room) => room,
         None => return Err(reject::custom(Error::RoomNotFoundError)),
     };
-    let room_response: RoomResponse = match db.get_room(&in_room).await {
-        Ok(room) => RoomResponse {
-            ok: true,
-            message: Option::default(),
-            id: room.id,
-            number: room.number,
-            coords: room.coords,
-            neighbors: room.neighbors,
-            game_id: room.game_id,
-            entry: room.entry,
-            exit: room.exit,
-        },
+    let room_response: RoomResponse = match get_room_by_id(&in_room, &db).await {
+        Ok(room_response) => room_response,
         Err(e) => return Err(reject::custom(e)),
     };
     let mut configured_2fa: Vec<SecondFactor> = Vec::new();
@@ -840,7 +910,13 @@ pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebRe
             .as_secs();
         match body.totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
             true => println!("TOTPs match"),
-            false => return Err(reject::custom(Error::WrongCredentialsError)),
+            false => {
+                if body.totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds - 30) {
+                    println!("TOTPs match (after going back 30 secs)");
+                } else {
+                    return Err(reject::custom(Error::WrongCredentialsError));
+                }
+            }
         }
     }
     match db.login_user(&user).await {
@@ -853,20 +929,11 @@ pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebRe
     };
     let in_room: bson::oid::ObjectId = match user.in_room {
         Some(room) => room,
-        None => return Err(reject::custom(Error::RoomNotFoundError)),
+        None => return Err(reject::custom(Error::UserIsInNoRoom)),
     };
-    let room_response: RoomResponse = match db.get_room(&in_room).await {
-        Ok(room) => RoomResponse {
-            ok: true,
-            message: Option::default(),
-            id: room.id,
-            number: room.number,
-            coords: room.coords,
-            neighbors: room.neighbors,
-            game_id: room.game_id,
-            entry: room.entry,
-            exit: room.exit,
-        },
+    // TODO: extract as function (see)
+    let room_response: RoomResponse = match get_room_by_id(&in_room, &db).await {
+        Ok(room_response) => room_response,
         Err(e) => return Err(reject::custom(e)),
     };
     let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
@@ -951,20 +1018,10 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         };
         let in_room: bson::oid::ObjectId = match user.in_room {
             Some(room) => room,
-            None => return Err(reject::custom(Error::RoomNotFoundError)),
+            None => return Err(reject::custom(Error::UserIsInNoRoom)),
         };
-        let room_response: RoomResponse = match db.get_room(&in_room).await {
-            Ok(room) => RoomResponse {
-                ok: true,
-                message: Option::default(),
-                id: room.id,
-                number: room.number,
-                coords: room.coords,
-                neighbors: room.neighbors,
-                game_id: room.game_id,
-                entry: room.entry,
-                exit: room.exit,
-            },
+        let room_response: RoomResponse = match get_room_by_id(&in_room, &db).await {
+            Ok(room_response) => room_response,
             Err(e) => return Err(reject::custom(e)),
         };
         let reply: warp::reply::Json = warp::reply::json(&json!(&UserWhoamiResponse {
@@ -1099,18 +1156,12 @@ pub async fn user_activation_handler(
         Ok(()) => (),
         Err(e) => return Err(reject::custom(e)),
     };
-    let in_room: RoomResponse = match db.get_room(&user.in_room.unwrap()).await {
-        Ok(room) => RoomResponse {
-            ok: true,
-            message: Option::default(),
-            id: room.id,
-            number: room.number,
-            coords: room.coords,
-            neighbors: room.neighbors,
-            game_id: room.game_id,
-            entry: room.entry,
-            exit: room.exit,
-        },
+    let in_room: bson::oid::ObjectId = match user.in_room {
+        Some(room) => room,
+        None => return Err(reject::custom(Error::UserIsInNoRoom)),
+    };
+    let room_response: RoomResponse = match get_room_by_id(&in_room, &db).await {
+        Ok(room_response) => room_response,
         Err(e) => return Err(reject::custom(e)),
     };
     let mut configured_2fa: Vec<SecondFactor> = Vec::new();
@@ -1141,7 +1192,7 @@ pub async fn user_activation_handler(
         last_login: user.last_login,
         level: user.level,
         score: user.score,
-        in_room,
+        in_room: room_response,
         solved: user.solved,
         rooms_entered: user.rooms_entered,
         jwt,
@@ -1159,7 +1210,14 @@ pub async fn user_registration_handler(
     let password: String = body.password;
     body.password = "******".to_string();
     println!("user_registration_handler(); body = {:?}", &body);
-    if password.len() < 8 || bad_password(&password) {
+    if password.len() < 8 {
+        return Err(reject::custom(Error::PasswordTooShortError));
+    }
+    let password_is_bad = match is_bad_password(&password) {
+        Ok(bad) => bad,
+        Err(_) => false, // soft fail
+    };
+    if password_is_bad {
         return Err(reject::custom(Error::UnsafePasswordError));
     }
     if !RE_USERNAME.is_match(&body.username.as_str()) {
@@ -1168,13 +1226,15 @@ pub async fn user_registration_handler(
     if !RE_MAIL.is_match(&body.email.as_str()) {
         return Err(reject::custom(Error::InvalidEmailError));
     }
-    match db.get_user(&body.username).await {
-        Ok(_) => return Err(reject::custom(Error::UsernameNotAvailableError)),
-        Err(Error::UserNotFoundError) => (),
-        Err(e) => {
-            println!("{}", &e);
-            return Err(reject::custom(e));
-        }
+    let taken = match db
+        .is_username_or_email_taken(&body.username, &body.email)
+        .await
+    {
+        Ok(taken) => taken,
+        Err(e) => return Err(reject::custom(Error::DatabaseQueryError(e.to_string()))),
+    };
+    if taken {
+        return Err(reject::custom(Error::UsernameOrEmailNotAvailableError));
     }
     let config: argon2::Config = Config {
         variant: Variant::Argon2i,
@@ -1238,7 +1298,7 @@ Deine PIN zur Aktivierung des Accounts: {:06}
 Bitte gib diese PIN auf der Labyrinth-Website ein.
 
 Viele Grüße,
-Dein Labyrinth-Betreuer
+Dein Rätselonkel
 
 
 *** Falls du keinen Schimmer hast, was es mit dieser Mail auf sich hat, kannst du sie getrost ignorieren ;-)"#,
@@ -1348,18 +1408,12 @@ pub async fn webauthn_login_finish_handler(
         Ok(jwt) => Some(jwt),
         Err(e) => return Err(reject::custom(e)),
     };
-    let room_response: RoomResponse = match db.get_room(&user.in_room.unwrap()).await {
-        Ok(room) => RoomResponse {
-            ok: true,
-            message: Option::default(),
-            id: room.id,
-            number: room.number,
-            coords: room.coords,
-            neighbors: room.neighbors,
-            game_id: room.game_id,
-            entry: room.entry,
-            exit: room.exit,
-        },
+    let in_room: ObjectId = match user.in_room {
+        Some(room) => room,
+        None => return Err(reject::custom(Error::UserIsInNoRoom)),
+    };
+    let room_response: RoomResponse = match get_room_by_id(&in_room, &db).await {
+        Ok(room_response) => room_response,
         Err(e) => return Err(reject::custom(e)),
     };
     let mut configured_2fa: Vec<SecondFactor> = Vec::new();

@@ -149,6 +149,17 @@ impl WebauthnManagementData {
     }
 }
 
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone, Copy)]
+pub struct RiddleAttempt {
+    pub riddle_id: ObjectId,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub t0: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[serde(with = "ts_seconds_option")]
+    pub t_solved: Option<DateTime<Utc>>,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct User {
     #[serde(rename = "_id")]
@@ -169,7 +180,8 @@ pub struct User {
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
-    pub solved: Vec<ObjectId>,
+    pub solved: Vec<RiddleAttempt>,
+    pub current_riddle_attempt: Option<RiddleAttempt>,
     #[serde(default)]
     pub rooms_entered: Vec<ObjectId>,
     #[serde(default)]
@@ -209,6 +221,7 @@ impl User {
             registered: Option::default(),
             last_login: Option::default(),
             solved: Vec::new(),
+            current_riddle_attempt: Option::default(),
             rooms_entered: Vec::new(),
             level: 0,
             score: 0,
@@ -413,12 +426,9 @@ impl DB {
             Err(e) => return Err(MongoQueryError(e)),
         };
         match riddle {
-            Some(riddle) => {
-                println!("Found {}", riddle.level);
-                Ok(Some(riddle))
-            }
+            Some(riddle) => Ok(Some(riddle)),
             None => {
-                println!("riddle not found");
+                println!("riddle level {} not found", level);
                 Ok(Option::default())
             }
         }
@@ -452,13 +462,12 @@ impl DB {
         username: &String,
         options: impl Into<Option<FindOneOptions>>,
     ) -> Result<Option<Riddle>> {
-        
         let user: Option<User> = match self
             .get_users_coll()
             .find_one(
                 doc! {
                     "username": username,
-                    "solved": riddle_id,
+                    "solved.riddle_id": riddle_id,
                 },
                 options,
             )
@@ -525,6 +534,40 @@ impl DB {
             }
         };
         (Some(found.riddle_id), Some(user), Option::default())
+    }
+
+    pub async fn is_username_or_email_taken(
+        &self,
+        username: &String,
+        email: &String,
+    ) -> Result<bool> {
+        println!(
+            "username_or_email_taken(); username = {}, email = {}",
+            username, email
+        );
+        let user: Option<User> = match self
+            .get_users_coll()
+            .find_one(
+                doc! {
+                    "$or": vec![
+                        doc! { "username": username },
+                        doc! { "email": email }
+                    ]
+                },
+                None,
+            )
+            .await
+        {
+            Ok(user) => user,
+            Err(e) => {
+                println!("{:?}", &e);
+                return Err(MongoQueryError(e));
+            }
+        };
+        match user {
+            Some(_user) => Ok(true),
+            None => Ok(false),
+        }
     }
 
     pub async fn get_user(&self, username: &String) -> Result<User> {
@@ -622,7 +665,7 @@ impl DB {
 
     pub async fn set_user_solved(
         &mut self,
-        solutions: &Vec<bson::oid::ObjectId>,
+        solutions: &Vec<RiddleAttempt>,
         user: &User,
     ) -> Result<()> {
         match self
@@ -631,9 +674,9 @@ impl DB {
                 doc! { "_id": user.id, "activated": true },
                 doc! {
                     "$set": {
-                        "solved": solutions,
+                        "solved": bson::to_bson(solutions).unwrap(),
                         "level": user.level,
-                        "score": user.score
+                        "score": user.score,
                     },
                 },
                 None,

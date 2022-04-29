@@ -21,9 +21,13 @@ pub enum Error {
     GridFSError(#[from] mongodb_gridfs::GridFSError),
     #[error("invalid id used: {0}")]
     InvalidIDError(String),
-    #[error("unsafe password")]
-    HashingError,
+    #[error("data base query error: {0}")]
+    DatabaseQueryError(String),
     #[error("hashing error")]
+    HashingError,
+    #[error("password must be at least 8 characters long")]
+    PasswordTooShortError,
+    #[error("unsafe password")]
     UnsafePasswordError,
     #[error("TOTP key missing error")]
     TotpKeyMissingError,
@@ -33,8 +37,8 @@ pub enum Error {
     UserNotFoundError,
     #[error("username is not valid")]
     InvalidUsernameError,
-    #[error("username not available")]
-    UsernameNotAvailableError,
+    #[error("username or email not available")]
+    UsernameOrEmailNotAvailableError,
     #[error("combination of username and mail address is not valid")]
     MalformedAddressError,
     #[error("mail address is not valid")]
@@ -51,6 +55,10 @@ pub enum Error {
     RoomNotFoundError,
     #[error("user is in no room")]
     UserIsInNoRoom,
+    #[error("riddle has not been seen")]
+    RiddleHasNotBeenSeenByUser,
+    #[error("user not associated with riddle")]
+    UserNotAssociatedWithRiddle,
     #[error("neighbor not found")]
     NeighborNotFoundError,
     #[error("room behind not found")]
@@ -102,7 +110,8 @@ pub async fn handle_rejection(err: Rejection) -> std::result::Result<impl Reply,
             Error::NeighborNotFoundError => (StatusCode::CONFLICT, e.to_string()),
             Error::UnsafePasswordError => (StatusCode::CONFLICT, e.to_string()),
             Error::InvalidEmailError => (StatusCode::CONFLICT, e.to_string()),
-            Error::UsernameNotAvailableError => (StatusCode::CONFLICT, e.to_string()),
+            Error::InvalidUsernameError => (StatusCode::CONFLICT, e.to_string()),
+            Error::UsernameOrEmailNotAvailableError => (StatusCode::CONFLICT, e.to_string()),
             Error::WrongCredentialsError => (StatusCode::FORBIDDEN, e.to_string()),
             Error::NoPermissionError => (StatusCode::UNAUTHORIZED, e.to_string()),
             Error::JWTTokenError => (StatusCode::UNAUTHORIZED, e.to_string()),
