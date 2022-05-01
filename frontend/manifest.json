@@ -1,0 +1,34 @@
+{
+  "short_name": "Labyrinth",
+  "name": "Labyrinth",
+  "description": "Finde heraus durch Lösen von Rätseln",
+  "icons": [
+    {
+      "src": "icon.appiconset/icon_16.png",
+      "type": "image/png",
+      "sizes": "16x16",
+      "scale": "1x"
+    },
+    {
+      "src": "icon.appiconset/icon_32.png",
+      "type": "image/png",
+      "sizes": "16x16",
+      "scale": "2x"
+    }
+  ],
+  "serviceworker": {
+    "src": "./serviceworker.js",
+    "scope": "/",
+    "type": "",
+    "update_via_cache": "none"
+  },
+  "dir": "ltr",
+  "categories": ["games", "puzzles", "riddles"],
+  "lang": "de-DE",
+  "orientation": "landscape-primary",
+  "start_url": "/",
+  "background_color": "#090b13",
+  "display": "standalone",
+  "scope": "/",
+  "theme_color": "#24cdd3"
+}

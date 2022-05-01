@@ -1,11 +1,1 @@
-.DS_Store
-Cargo.lock
-target/
-JWT_SECRET_KEY
-token.json
-credentials.json
-Pipfile.lock
-.env
-linux/
-toppass8-md5.bin
-toppass-huge.md5
+*.workspace

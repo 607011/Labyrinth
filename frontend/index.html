@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html dir="ltr" lang="de">
+    <head>
+        <meta charset="utf-8">
+        <title>Labyrinth</title>
+        <meta name="description" content="Ein textbasiertes Escape Game">
+        <meta name="keywords" content="Rätsel, Spiel, Labyrinth, Escape Room">
+        <meta name="author" content="Oliver Lau">
+        <meta name="designer" content="Oliver Lau">
+        <meta name="publisher" content="Oliver Lau">
+        <meta name="copyright" content="Oliver Lau">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" type="image/x-icon" href="favicon.ico">
+        <link rel="manifest" href="manifest.json" />
+        <script>
+            let t0 = performance.now();
+        </script>
+        <script async src="labyrinth.js"></script>
+        <style>
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: normal;
+                font-weight: 400;
+                font-display: swap;
+                src: url(fonts/VictorMono-Regular.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: normal;
+                font-weight: 500;
+                font-display: swap;
+                src: url(fonts/VictorMono-Medium.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: normal;
+                font-weight: 600;
+                font-display: swap;
+                src: url(fonts/VictorMono-SemiBold.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: normal;
+                font-weight: 700;
+                font-display: swap;
+                src: url(fonts/VictorMono-Bold.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: italic;
+                font-weight: 400;
+                font-display: swap;
+                src: url(fonts/VictorMono-Italic.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: italic;
+                font-weight: 500;
+                font-display: swap;
+                src: url(fonts/VictorMono-MediumItalic.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: italic;
+                font-weight: 600;
+                font-display: swap;
+                src: url(fonts/VictorMono-SemiBoldItalic.woff2) format('woff2');
+            }
+            @font-face {
+                font-family: 'Victor Mono';
+                font-style: italic;
+                font-weight: 700;
+                font-display: swap;
+                src: url(fonts/VictorMono-BoldItalic.woff2) format('woff2');
+            }
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body, html {
+                font-size: 10pt;
+                font-family: 'Victor Mono', monospace;
+                background-color: #090b13;
+                color: #24cdd3;
+                text-shadow: 0 0 10px #2fa8b86e;
+            }
+            .hidden {
+                display: none;
+            }
+            a, a:visited {
+                color: #24cdd3;
+                border-bottom: 2px dotted #24cdd3
+            } 
+        </style>
+    </head>
+    <body>
+        <game-div class="hidden"></game-div>
+        <p id="so-sad" class="hidden">Dein Browser unterstützt keine Custom Elements. Bitte installiere einen <a href="https://caniuse.com/?search=custom%20elements%20(v1)">Browser, der das kann</a>.</p>
+    </body>
+</html>
