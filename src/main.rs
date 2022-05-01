@@ -119,6 +119,13 @@ fn is_bad_password(password: &String) -> std::result::Result<bool, std::io::Erro
     Ok(false)
 }
 
+#[derive(Serialize, Debug)]
+pub struct PingResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub version: String,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UserRegistrationRequest {
     pub username: String,
@@ -393,6 +400,16 @@ async fn get_room_by_id(room_id: &ObjectId, db: &DB) -> Result<RoomResponse> {
         Err(e) => return Err(e),
     };
     Ok(room_response)
+}
+
+pub async fn ping_handler() -> WebResult<impl Reply> {
+    println!("ping_handler()");
+    let reply: warp::reply::Json = warp::reply::json(&json!(&PingResponse {
+        ok: true,
+        message: Option::default(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
 pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebResult<impl Reply> {
@@ -1455,7 +1472,7 @@ async fn main() -> Result<()> {
     let db = DB::init().await?;
     let root = warp::path::end().map(|| "Labyrinth API root.");
     /* Routes accessible to all users */
-    let ping_route = warp::path!("ping").and(warp::get()).map(warp::reply);
+    let ping_route = warp::path!("ping").and(warp::get()).and_then(ping_handler);
     let user_register_route = warp::path!("user" / "register")
         .and(warp::post())
         .and(warp::body::json())
