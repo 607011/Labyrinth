@@ -436,9 +436,9 @@ svg, img, embed {
                         this.textarea.value = suggestion;
                         cmdSpan.textContent = suggestion;
                         suggSpan.textContent = '';
-                        e.stopPropagation();
-                        e.preventDefault();
                     }
+                    e.stopPropagation();
+                    e.preventDefault();
                     break;
                 default:
                     if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.cmdKey) {
