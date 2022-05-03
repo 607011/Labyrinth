@@ -430,7 +430,8 @@ svg, img, embed {
                     suggSpan.remove();
                     callback(this.textarea.value);
                     e.stopPropagation();
-                    return e.preventDefault();
+                    e.preventDefault();
+                    break;
                 case 'Tab':
                     if (suggestion && suggestion.length > 0) {
                         this.textarea.value = suggestion;
@@ -458,19 +459,23 @@ svg, img, embed {
                         --this.historyIndex;
                         this.textarea.value = this.history[this.historyIndex];
                         cmdSpan.textContent = this.history[this.historyIndex];
+                        tailSpan.textContent = '';
+                        suggSpan.textContent = '';
+                        updateTextarea();
                     }
-                    return e.preventDefault();
+                    e.preventDefault();
+                    break;
                 case 'ArrowDown':
                     if (this.historyIndex < this.history.length-1) {
                         ++this.historyIndex;
                         this.textarea.value = this.history[this.historyIndex];
                         cmdSpan.textContent = this.history[this.historyIndex];
-                    }
-                    else {
-                        cmdSpan.textContent = '';
                         tailSpan.textContent = '';
+                        suggSpan.textContent = '';
                     }
-                    return e.preventDefault();
+                    updateTextarea();
+                    e.preventDefault();
+                    break;
                 case 'ArrowLeft':
                     // fall-through
                 case 'ArrowRight':
