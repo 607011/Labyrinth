@@ -763,9 +763,9 @@ let main = () => {
     }
 };
 
-console.log('%c Labyrinth v%s %c - Löse Rätsel, finde den Weg heraus.\nCopyright © 2022 Oliver Lau <oliver@ersatzworld.net>\nAlle Rechte vorbehalten.',
+console.log('%c Labyrinth %c (revision %s) - Löse Rätsel, finde den Weg heraus.\nCopyright © 2022 Oliver Lau <oliver@ersatzworld.net>\nAlle Rechte vorbehalten.',
     'background: #111; color: #24cdd3; font-weight: bold;',
-    VERSION,
-    'background: transparent; color: #222; font-weight: normal;')
+    'background: transparent; color: #222; font-weight: normal;',
+    REVISION)
 
 window.addEventListener('load', main);
