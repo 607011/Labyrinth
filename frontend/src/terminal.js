@@ -294,44 +294,38 @@ svg, img, embed {
             const onInput = e => {
                 updateTextarea();
             };
+            const deactivateInput = e => {
+                textarea.removeEventListener('keyup', onKeyup);
+                textarea.removeEventListener('keydown', onKeydown);
+                textarea.removeEventListener('input', onInput);
+                window.removeEventListener('focus', onFocus);
+                window.removeEventListener('blur', onBlur);
+                cmdSpan.classList.remove('input');
+                cursor.remove();
+                tailSpan.remove();
+                e.stopPropagation();
+                textarea.remove();
+                e.preventDefault();
+            };
             const onKeydown = e => {
                 switch (e.key) {
                     case 'c':
                         if (e.ctrlKey) {
                             this.writeln(tr('^C'));
-                            textarea.removeEventListener('keyup', onKeyup);
-                            textarea.removeEventListener('keydown', onKeydown);
-                            textarea.removeEventListener('input', onInput);
-                            window.removeEventListener('focus', onFocus);
-                            window.removeEventListener('blur', onBlur);
-                            cmdSpan.classList.remove('input');
-                            cursor.remove();
-                            tailSpan.remove();
-                            e.stopPropagation();
-                            textarea.remove();
-                            e.preventDefault();
+                            deactivateInput(e);
                             reject();
                         }
                         break;
                     case 'Enter':
                     case 'Escape':
-                        textarea.removeEventListener('keyup', onKeyup);
-                        textarea.removeEventListener('keydown', onKeydown);
-                        textarea.removeEventListener('input', onInput);
-                        window.removeEventListener('focus', onFocus);
-                        window.removeEventListener('blur', onBlur);
-                        cmdSpan.classList.remove('input');
-                        cursor.remove();
-                        tailSpan.remove();
+                        const value = textarea.value;
+                        deactivateInput(e);
                         if (e.key === 'Enter') {
-                            resolve(textarea.value);
+                            resolve(value);
                         }
                         else {
                             resolve();
                         }
-                        textarea.remove();
-                        e.stopPropagation();
-                        e.preventDefault();
                         break;
                     default:
                         break;
@@ -367,12 +361,17 @@ svg, img, embed {
         cmdSpan.className = 'input';
         let tailSpan = document.createElement('span');
         tailSpan.className = 'tail';
-        this.textarea = document.createElement('textarea');
-        this.textarea.setAttribute('autocorrect', 'off');
-        this.textarea.setAttribute('autocapitalize', 'off');
-        this.textarea.setAttribute('spellcheck', 'off');
-        this.textarea.setAttribute('tabindex', 0);
-        this.textarea.className = 'input-helper';
+        if (this.textarea === null) {
+            this.textarea = document.createElement('textarea');
+            this.textarea.className = 'input-helper';
+            this.textarea.setAttribute('autocorrect', 'off');
+            this.textarea.setAttribute('autocapitalize', 'off');
+            this.textarea.setAttribute('spellcheck', 'off');
+            this.textarea.setAttribute('tabindex', 0);
+            this.textarea.addEventListener('input', onInput);
+            this.textarea.addEventListener('keyup', onKeyup);
+            this.textarea.addEventListener('keydown', onKeydown);
+        }
         this.el.appendChild(this.textarea);
         let cursor = document.createElement('span');
         cursor.className = 'cursor';
@@ -418,9 +417,6 @@ svg, img, embed {
         const onKeydown = e => {
             switch (e.key) {
                 case 'Enter':
-                    this.textarea.removeEventListener('keyup', onKeyup);
-                    this.textarea.removeEventListener('keydown', onKeydown);
-                    this.textarea.removeEventListener('input', onInput);
                     window.removeEventListener('focus', onFocus);
                     window.removeEventListener('blur', onBlur);
                     cmdSpan.classList.remove('input');
@@ -485,9 +481,6 @@ svg, img, embed {
                     break;
                 }
         };
-        this.textarea.addEventListener('input', onInput);
-        this.textarea.addEventListener('keyup', onKeyup);
-        this.textarea.addEventListener('keydown', onKeydown);
         this.textarea.focus();
         window.addEventListener('focus', onFocus);
         window.addEventListener('blur', onBlur);
