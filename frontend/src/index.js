@@ -61,18 +61,7 @@ terminal-div {
     // height: calc(100% - 40px);
     padding: 4px;
 }
-.b400 {
-    font-weight: 400;
-}
-.b500 {
-    font-weight: 500;
-}
-.b600 {
-    font-weight: 600;
-}
-.b700 {
-    font-weight: 700;
-}`;
+`;
         this.term = document.createElement('terminal-div');
         this.progressbar = document.createElement('progress-bar');
         this.progressbar.setAttribute('disabled', true);
@@ -343,7 +332,7 @@ terminal-div {
             this.print(tr(`Du kannst nicht nach ${DIRECTIONS[direction]} gehen.`));
             return false;
         }
-        const solved = this.user.solved.find(riddle => riddle.$oid === neighbor.riddle_id.$oid);
+        const solved = this.user.solved.find(riddle => riddle.riddle_id.$oid === neighbor.riddle_id.$oid);
         if (solved) {
             const reply = await this.go(direction);
             if (reply.ok) {
