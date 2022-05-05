@@ -361,18 +361,6 @@ svg, img, embed {
         cmdSpan.className = 'input';
         let tailSpan = document.createElement('span');
         tailSpan.className = 'tail';
-        if (this.textarea === null) {
-            this.textarea = document.createElement('textarea');
-            this.textarea.className = 'input-helper';
-            this.textarea.setAttribute('autocorrect', 'off');
-            this.textarea.setAttribute('autocapitalize', 'off');
-            this.textarea.setAttribute('spellcheck', 'off');
-            this.textarea.setAttribute('tabindex', 0);
-            this.textarea.addEventListener('input', onInput);
-            this.textarea.addEventListener('keyup', onKeyup);
-            this.textarea.addEventListener('keydown', onKeydown);
-        }
-        this.el.appendChild(this.textarea);
         let cursor = document.createElement('span');
         cursor.className = 'cursor';
         let suggSpan = document.createElement('span');
@@ -382,23 +370,26 @@ svg, img, embed {
         div.appendChild(tailSpan);
         div.appendChild(suggSpan);
         this.el.appendChild(div);
-        let suggestion;
-        const onFocus = function(e) {
+        let suggestion = '';
+        const onFocus = e => {
             e.preventDefault();
             e.stopImmediatePropagation();
             this.textarea.focus();
             this.el.classList.remove('blurred');
             return true;
-        }.bind(this);
-        const onBlur = function(e) {
+        };
+        const onBlur = _e => {
             this.el.classList.add('blurred');
-        }.bind(this);
-        let onMouseup = e => {
+        };
+        const onMouseup = e => {
             this.textarea.focus();
             this.el.classList.remove('blurred');
             e.stopPropagation();
             e.preventDefault();
         };
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('blur', onBlur);
+        window.addEventListener('mouseup', onMouseup);
         const updateTextarea = () => {
             if (this.textarea.selectionStart < this.textarea.value.length) {
                 cmdSpan.textContent = this.textarea.value.substring(0, this.textarea.selectionStart);
@@ -421,10 +412,15 @@ svg, img, embed {
                     window.removeEventListener('blur', onBlur);
                     cmdSpan.classList.remove('input');
                     cursor.remove();
+                    suggSpan.remove();
+                    tailSpan.remove();
+                    this.textarea.removeEventListener('input', onInput);
+                    this.textarea.removeEventListener('keyup', onKeyup);
+                    this.textarea.removeEventListener('keydown', onKeydown);
                     this.writeln();
                     this.addToHistory(this.textarea.value);
-                    suggSpan.remove();
                     callback(this.textarea.value);
+                    this.textarea.value = '';
                     e.stopPropagation();
                     e.preventDefault();
                     break;
@@ -447,7 +443,7 @@ svg, img, embed {
                     }
                     break;
             }
-        }
+        };
         const onKeyup = e => {
             switch (e.key) {
                 case 'ArrowUp':
@@ -481,10 +477,20 @@ svg, img, embed {
                     break;
                 }
         };
+        if (this.textarea === null) {
+            this.textarea = document.createElement('textarea');
+            this.textarea.className = 'input-helper';
+            this.textarea.setAttribute('autocorrect', 'off');
+            this.textarea.setAttribute('autocapitalize', 'off');
+            this.textarea.setAttribute('spellcheck', 'off');
+            this.textarea.setAttribute('tabindex', 0);
+            this.el.appendChild(this.textarea);
+        }
+        this.textarea.addEventListener('input', onInput);
+        this.textarea.addEventListener('keyup', onKeyup);
+        this.textarea.addEventListener('keydown', onKeydown);
         this.textarea.focus();
-        window.addEventListener('focus', onFocus);
-        window.addEventListener('blur', onBlur);
-        window.addEventListener('mouseup', onMouseup);
+        setTimeout(function() { window.scrollTo(0, this.scrollHeight); }.bind(this), 100);
     }
     clear() {
         this.el.textContent = '';
