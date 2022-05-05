@@ -96,10 +96,10 @@ svg, img, embed {
 .b500 {
     font-weight: 500;
 }
-.b600 {
+bold, .b600 {
     font-weight: 600;
 }
-.b700 {
+strong, .b700 {
     font-weight: 700;
 }
 .scanlines {
