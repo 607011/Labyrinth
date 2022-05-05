@@ -242,7 +242,7 @@ const COMMANDS = [
                         : tr(`In Richtung ${directions} kannst du weitergehen.`);
                 this.print(msg);
                 for (const neighbor of this.user.in_room.neighbors) {
-                    const solved = this.user.solved.find(rid => rid.$oid === neighbor.riddle_id.$oid);
+                    const solved = this.user.solved.find(rid => rid.riddle_id.$oid === neighbor.riddle_id.$oid);
                     const dirEl = document.createElement('span');
                     dirEl.className = 'clickable-direction';
                     dirEl.textContent = DIRECTIONS[neighbor.direction];
