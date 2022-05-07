@@ -14,4 +14,4 @@ This [software](https://github.com/raetselonkel/Labyrinth) consists of two parts
 
 ## Contact
 
-If you encounter problems with this software, please report them via the [GitHub project page](https://github.com/raetselonkel/Labyrinth). Feel free to leave encouraging and/or critical comments, or propose new features. If you've got a nice fresh idea for a new riddle, I'd be thankful if you contact me via [e-mail]((mailto:oliver@ersatzworld.net)).
+If you encounter problems with this software, please report them via the [GitHub project page](https://github.com/raetselonkel/Labyrinth). Feel free to leave encouraging and/or critical comments, or propose new features. If you've got a nice fresh idea for a new riddle, I'd be thankful if you contact me via [e-mail](mailto:oliver@ersatzworld.net).
