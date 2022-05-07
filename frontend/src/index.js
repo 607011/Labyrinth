@@ -458,7 +458,7 @@ terminal-div {
                 if (solution.length > 0) {
                     reply = await riddle.solve(solution);
                     if (reply.solved) {
-                        this.user.solved.push({'$oid': reply.riddle_id.$oid});
+                        this.user.solved.push({riddle_id: {$oid: reply.riddle_id.$oid}});
                         const debriefing_response = await Riddle.getDebriefing(reply.riddle_id.$oid);
                         const debriefing = debriefing_response.debriefing;
                         this.print();

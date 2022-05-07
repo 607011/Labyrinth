@@ -10,10 +10,10 @@ Viel Spaß und viel Erfolg!
 
 ## Hintergründiges
 
-Diese [Software](https://github.com/ola-ct/Labyrinth) besteht aus zwei Teilen: dem Frontend (das, was du gerade siehst) und dem Backend (ein Webservice, der Zugriff auf die Spieldaten bietet). Der Webservice hat ein [REST](https://en.wikipedia.org/wiki/Representational_state_transfer)-[API](https://en.wikipedia.org/wiki/API), das in [Rust](https://rust-lang.org/) geschrieben wurde. Es kommuniziert mit einer [MongoDB](https://mongodb.com/)-Datenbank, die Informationen über die Räume, die Türen, die Rätsel und die User speichert. Benutzer werden über JSON Web Tokens ([JWT](https://jwt.io/)) authentifiziert.
+Diese [Software](https://github.com/raetselonkel/Labyrinth) besteht aus zwei Teilen: dem Frontend (das, was du gerade siehst) und dem Backend (ein Webservice, der Zugriff auf die Spieldaten bietet). Der Webservice hat ein [REST](https://en.wikipedia.org/wiki/Representational_state_transfer)-[API](https://en.wikipedia.org/wiki/API), das in [Rust](https://rust-lang.org/) geschrieben wurde. Es kommuniziert mit einer [MongoDB](https://mongodb.com/)-Datenbank, die Informationen über die Räume, die Türen, die Rätsel und die User speichert. Benutzer werden über JSON Web Tokens ([JWT](https://jwt.io/)) authentifiziert.
 
 *Labyrinth* ist ein privates Projekt von [Oliver Lau](mailto:oliver@ersatzworld.net).
 
 ## Kontakt
 
-Falls du Bugs in dieser Software entdeckst, melde sie bitte über die [GitHub-Projektseite](https://github.com/ola-ct/Labyrinth). Aufmunternde und/oder kritische Kommentare sowie Vorschläge für neue Features sind ebenfalls willkommen. Falls du eine coole Rätselidee hast, halte damit bitte nicht hinter dem Berg, sondern schick sie mir per [E-Mail](mailto:oliver@ersatzworld.net).
+Falls du Bugs in dieser Software entdeckst, melde sie bitte über die [GitHub-Projektseite](https://github.com/raetselonkel/Labyrinth). Aufmunternde und/oder kritische Kommentare sowie Vorschläge für neue Features sind ebenfalls willkommen. Falls du eine coole Rätselidee hast, halte damit bitte nicht hinter dem Berg, sondern schick sie mir per [E-Mail](mailto:oliver@ersatzworld.net).

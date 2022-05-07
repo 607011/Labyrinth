@@ -14,7 +14,7 @@ def passwords():
 def main():
     hashes = [hash for hash in passwords()]
     hashes.sort()
-    with open('toppass8-md5.bin', 'wb') as f:
+    with open('toppass8-md5.bin', 'wb+') as f:
         for hash in hashes:
             f.write(hash)
 

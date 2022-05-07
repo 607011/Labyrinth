@@ -6,13 +6,13 @@ Good luck!
 
 ## Background
 
-This [software](https://github.com/ola-ct/Labyrinth) consists of two parts: the frontend (what you’re currently seeing) and the backend (a webservice giving access to the game data). The webservice has a [REST](https://en.wikipedia.org/wiki/Representational_state_transfer) [API](https://en.wikipedia.org/wiki/API) implemented in [Rust](https://rust-lang.org/). It’s connected to a [MongoDB](https://mongodb.com/) database, which stores the information about the rooms, the doors, the riddles, and you, the registered user. Users are authenticated by JSON Web Tokens ([JWT](https://jwt.io/)). 
+This [software](https://github.com/raetselonkel/Labyrinth) consists of two parts: the frontend (what you’re currently seeing) and the backend (a webservice giving access to the game data). The webservice has a [REST](https://en.wikipedia.org/wiki/Representational_state_transfer) [API](https://en.wikipedia.org/wiki/API) implemented in [Rust](https://rust-lang.org/). It’s connected to a [MongoDB](https://mongodb.com/) database, which stores the information about the rooms, the doors, the riddles, and you, the registered user. Users are authenticated by JSON Web Tokens ([JWT](https://jwt.io/)). 
 
 *Labyrinth* is a private project by me, [Oliver Lau](mailto:oliver@ersatzworld.net).
 
 ## Contact
 
-If you encounter problems with this software, please report them via the [GitHub project page](https://github.com/ola-ct/Labyrinth). Feel free to leave encouraging and/or critical comments, or propose new features. If you've got a nice fresh idea for a new riddle, I'd be thankful if you contact me via [e-mail]((mailto:oliver@ersatzworld.net)).
+If you encounter problems with this software, please report them via the [GitHub project page](https://github.com/raetselonkel/Labyrinth). Feel free to leave encouraging and/or critical comments, or propose new features. If you've got a nice fresh idea for a new riddle, I'd be thankful if you contact me via [e-mail]((mailto:oliver@ersatzworld.net)).
 
 ## License
 

@@ -24,7 +24,7 @@ Sämtliche Inhalte des Dienstes, beispielhaft und nicht abschließend Texte, Dat
 
 ## Community
 
-Wir begrüßen es, wenn Sie sich mit konstruktiver Kritik an der Weiterentwicklung des Spiels beteiligen. Um Fehler zu melden, benutzen Sie bitte das Ticketmanagementsystem der Entwicklungsplattform GitHub. Es gibt [eines für das Backend](https://github.com/ola-ct/Labyrinth/issues) (der Server, der den Dienst bereitstellt) und [eines für das Frontend](https://github.com/ola-ct/Labyrinth-Frontend/issues) (das, was Sie im Browser sehen, wenn Sie die [Spiel-Website](https://labyrinth.raetselonkel.de) aufgerufen haben). Wenn Sie Vorschläge für neue Rätsel haben, wenden Sie sich bitte per [Mail an den Anbieter](mailto:riddle-proposals@ersatzworld.net). 
+Wir begrüßen es, wenn Sie sich mit konstruktiver Kritik an der Weiterentwicklung des Spiels beteiligen. Um Fehler zu melden, benutzen Sie bitte das Ticketmanagementsystem der Entwicklungsplattform GitHub. Es gibt [eines für das Backend](https://github.com/raetselonkel/Labyrinth/issues) (der Server, der den Dienst bereitstellt) und [eines für das Frontend](https://github.com/raetselonkel/Labyrinth-Frontend/issues) (das, was Sie im Browser sehen, wenn Sie die [Spiel-Website](https://labyrinth.raetselonkel.de) aufgerufen haben). Wenn Sie Vorschläge für neue Rätsel haben, wenden Sie sich bitte per [Mail an den Anbieter](mailto:riddle-proposals@ersatzworld.net). 
 
 ## Verhaltenskodex
 
@@ -48,7 +48,7 @@ Sie nutzen den Dienst auf eigenes Risiko. Wir sind nicht verantwortlich für Ver
 
 Wir verpflichten uns zur [DSGVO](https://eur-lex.europa.eu/legal-content/DE/ALL/?uri=celex%3A32016R0679&tid=311984209)-konformen Erhebung, Verarbeitung, Speicherung und Weitergabe personenbezogener Daten:
 
-- Sie müssen bei der Registrierung für den Dienst keine persönlichen Daten außer Ihrer Mailadresse angeben. Den Benutzernamen und das Passwort können Sie frei wählen, unter der Voraussetzung, dass der Benutzername nicht bereits vergeben ist und das Passwort ausreichend sicher. Beides prüft der Dienst während des Registrierungsvorgangs und informiert Sie über eine nicht bestandene Prüfung. Das Passwort muss mindestens 8 Zeichen lang sein (11 oder mehr empfohlen) und darf nicht in der [Liste der 10 Millionen häufigsten Passwörter](https://github.com/danielmiessler/SecLists/blob/master/Passwords/Common-Credentials/10-million-password-list-top-1000000.txt) vorkommen.
+- Sie müssen bei der Registrierung für den Dienst keine persönlichen Daten außer Ihrer Mailadresse angeben. Den Benutzernamen und das Passwort können Sie frei wählen, unter der Voraussetzung, dass der Benutzername nicht bereits vergeben ist und das Passwort ausreichend sicher. Beides prüft der Dienst während des Registrierungsvorgangs und informiert Sie über eine nicht bestandene Prüfung. Das Passwort muss mindestens 8 Zeichen lang sein (11 oder mehr empfohlen) und darf nicht in der [Liste geleakter Passwörter](https://github.com/danielmiessler/SecLists/blob/master/Passwords/Common-Credentials/10-million-password-list-top-1000000.txt) vorkommen.
 - Das Passwort wird über eine verschlüsselte Verbindung von Ihrem Browser zum Dienst übertragen, damit der Dienst die notwendigen Prüfungen durchführen kann.
 - Das Passwort wird nicht im Klartext gespeichert, sondern ein [Hash](https://de.wikipedia.org/wiki/Argon2) davon, aus dem sich das Passwort nicht wiederherstellen lässt.
 - Die Mailadresse benötigt der Dienst, um eine Bestätigungsmail an Sie zu senden. Die Mail enthält eine PIN, die Sie zur Aktivierung Ihres Kontos benötigen. Des Weiteren benötigt der Dienst die Mailadresse zur Wiederherstellung Ihres Kontos, falls Sie Ihren Benutzernamen und/oder Ihr Passwort vergessen haben.
@@ -61,5 +61,5 @@ Wir verpflichten uns zur [DSGVO](https://eur-lex.europa.eu/legal-content/DE/ALL/
 - Im Frontend des Dienstes haben Sie jederzeit die Möglichkeit, die Daten abzurufen und einzusehen, die der Dienst über Sie gespeichert hat.
 
 
- - - - - - ENDE DER VEREINBARUNG 
+ ///// ENDE DER VEREINBARUNG 
 
