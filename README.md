@@ -8,7 +8,7 @@ This is an escape game. Find your way through the labyrinth to the exit. The lab
 
 ## Background
 
-This [software](https://github.com/raetselonkel/Labyrinth) consists of two parts: the [frontend](frontend) (what you’re currently seeing) and the [backend](backend) (a webservice giving access to the game data). The webservice has a [REST](https://en.wikipedia.org/wiki/Representational_state_transfer) [API](https://en.wikipedia.org/wiki/API) implemented in [Rust](https://rust-lang.org/). It’s connected to a [MongoDB](https://mongodb.com/) database, which stores the information about the rooms, the doors, the riddles, and you, the registered user. Users are authenticated by JSON Web Tokens ([JWT](https://jwt.io/)). 
+This [software](https://github.com/raetselonkel/Labyrinth) consists of two parts: the [frontend](frontend) (what you can see above) and the [backend](backend) (a webservice giving access to the game data). The webservice has a [REST](https://en.wikipedia.org/wiki/Representational_state_transfer) [API](https://en.wikipedia.org/wiki/API) implemented in [Rust](https://rust-lang.org/). It’s connected to a [MongoDB](https://mongodb.com/) database, which stores the information about the rooms, the doors, the riddles, and you, the registered user. Users are authenticated by JSON Web Tokens ([JWT](https://jwt.io/)). 
 
 *Labyrinth* is a private project by [Oliver Lau](mailto:oliver@ersatzworld.net).
 
