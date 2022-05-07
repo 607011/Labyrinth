@@ -2,7 +2,7 @@
 
 __An Escape Room like game which looks like an 80’s text adventure__
 
-![Preview](preview.png)
+![Preview](preview.gif)
 
 This is an escape game. Find your way through the labyrinth to the exit. The labyrinth is constructed from rooms which are interconnected by doors. To step through a door, it has to been opened first by typing in a password. The password is the solution of a riddle you have to solve. Once opened, a door stays open. All your data is stored on the server, so that your game session is restored each time you login. That means, you can play the game with the same state in different browsers.
 
