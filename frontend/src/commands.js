@@ -31,7 +31,7 @@ const COMMANDS = [
                 type: 'integer',
             }
         ],
-        description: tr('Ein Rätsel abrufen (nur für Admins!)'),
+        description: tr('Ein Rätsel über seine Level-Nummer abrufen'),
         fn: async function(params) {
             let [level] = params;
             if (typeof level === 'undefined') {
