@@ -682,7 +682,6 @@ const COMMANDS = [
             let data = {
                 username: username,
                 email: email,
-                role: 'User',
                 password: password,
                 locale: this.locale,
                 secondFactorMethod: null,

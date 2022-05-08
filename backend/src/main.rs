@@ -130,7 +130,6 @@ pub struct PingResponse {
 pub struct UserRegistrationRequest {
     pub username: String,
     pub email: String,
-    pub role: Role,
     pub password: String,
     #[serde(default)]
     pub locale: String,
@@ -1281,7 +1280,7 @@ pub async fn user_registration_handler(
         .create_user(&User::new(
             &body.username,
             &body.email,
-            body.role,
+            Role::User,
             hash,
             pin,
             totp_key,
