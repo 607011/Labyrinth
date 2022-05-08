@@ -334,6 +334,7 @@ const COMMANDS = [
         ],
         description: tr('diese Hilfe ausgeben'),
         fn: function(params) {
+            const role = this.user && this.user.role ? this.user.role : null;
             if (params instanceof Array && params.length > 0) {
                 for (const param of params) {
                     const c = Game.COMMANDS.find(cc => cc.name === param);
@@ -354,7 +355,7 @@ const COMMANDS = [
                 }
             }
             else {
-                const output = Game.COMMANDS.map(cmd => `<span class="b600">${cmd.name}</span>:\n  ${cmd.description}`).join('\n');
+                const output = Game.COMMANDS.filter(cmd => cmd.roles.includes(role)).map(cmd => `<strong>${cmd.name}</strong>:\n  ${cmd.description}`).join('\n');
                 this.print(output);
             }
             return Promise.resolve();
