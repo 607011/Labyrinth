@@ -13,6 +13,7 @@ const RE = {
     USERNAME: /\w+/,
     PASSWORD: /.{8,}/,
     COMMANDLINE: /[^']+'|"[^"]+"|[^\s"]+/g,
+    ROLE: /User|Admin|Designer/i,
 };
 const SECOND_FACTOR = {
     TOTP: 'TOTP',
