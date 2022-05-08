@@ -3,7 +3,6 @@
  * All rights reserved.
  */
 use crate::error::Error;
-use argon2::{self, Config, ThreadMode, Variant, Version};
 use auth::{with_auth, Role};
 use base32;
 use bson::oid::ObjectId;
@@ -15,6 +14,7 @@ use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
 use mongodb::bson::doc;
 use mongodb_gridfs::{options::GridFSBucketOptions, GridFSBucket};
+use passwd::Password;
 use qrcode_generator::QrCodeEcc;
 use rand::Rng;
 use rand_core::{OsRng, RngCore};
@@ -40,6 +40,7 @@ mod auth;
 mod b64;
 mod db;
 mod error;
+mod passwd;
 mod webauthn;
 
 type Result<T> = std::result::Result<T, error::Error>;
@@ -135,6 +136,11 @@ pub struct UserRegistrationRequest {
     pub locale: String,
     #[serde(rename = "secondFactorMethod")]
     pub second_factor: Option<SecondFactor>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct UserPasswordChangeRequest {
+    pub password: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -812,12 +818,10 @@ pub async fn promote_user_handler(
         Ok(role) => role,
         Err(e) => return Err(reject::custom(e)),
     };
-    dbg!(&current_role);
     let user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    dbg!(&user.role);
     if role <= current_role {
         return Err(reject::custom(Error::CannotChangeToSameRole));
     }
@@ -1034,7 +1038,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
         Err(e) => return Err(reject::custom(e)),
     };
     println!("got user: {:?}", &user);
-    let matches: bool = match argon2::verify_encoded(&user.hash, body.password.as_bytes()) {
+    let matches: bool = match Password::matches(&user.hash, &body.password) {
         Ok(matches) => matches,
         Err(_) => return Err(reject::custom(Error::HashingError)),
     };
@@ -1271,6 +1275,35 @@ pub async fn user_activation_handler(
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
+pub async fn user_password_change_handler(
+    username: String,
+    mut body: UserPasswordChangeRequest,
+    mut db: DB,
+) -> WebResult<impl Reply> {
+    let password: String = body.password;
+    body.password = "******".to_string();
+    println!("user_password_change_handler(); body = {:?}", &body);
+    if password.len() < 8 {
+        return Err(reject::custom(Error::PasswordTooShortError));
+    }
+    let password_is_bad = match is_bad_password(&password) {
+        Ok(bad) => bad,
+        Err(_) => false, // soft fail
+    };
+    if password_is_bad {
+        return Err(reject::custom(Error::UnsafePasswordError));
+    }
+    match db.set_user_password(&username, &password).await {
+        Ok(()) => (),
+        Err(e) => return Err(reject::custom(e)),
+    }
+    let reply: warp::reply::Json = warp::reply::json(&json!(&StatusResponse {
+        ok: true,
+        message: Option::default(),
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
 pub async fn user_registration_handler(
     mut body: UserRegistrationRequest,
     mut db: DB,
@@ -1304,27 +1337,15 @@ pub async fn user_registration_handler(
     if taken {
         return Err(reject::custom(Error::UsernameOrEmailNotAvailableError));
     }
-    let config: argon2::Config = Config {
-        variant: Variant::Argon2i,
-        version: Version::Version13,
-        mem_cost: 65536,
-        time_cost: 10,
-        lanes: 4,
-        thread_mode: ThreadMode::Parallel,
-        secret: &[],
-        ad: &[],
-        hash_length: 32,
-    };
-    let salt: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
-    let hash: String = match argon2::hash_encoded(password.as_bytes(), &salt, &config) {
+    let hash: String = match Password::hash(&password) {
         Ok(hash) => hash,
-        Err(_) => return Err(reject::custom(Error::HashingError)),
+        Err(e) => return Err(reject::custom(e)),
     };
     let mut pin: PinType = 0;
     while pin == 0 {
         pin = OsRng.next_u32() % 1000000;
     }
-    let totp_key = match body.second_factor {
+    let totp_key: Vec<u8> = match body.second_factor {
         Some(SecondFactor::Totp) => rand::thread_rng().gen::<[u8; 32]>().to_vec(),
         _ => Vec::new(),
     };
@@ -1539,6 +1560,12 @@ async fn main() -> Result<()> {
         .and(warp::body::json())
         .and(with_db(db.clone()))
         .and_then(user_login_handler);
+    let user_password_route = warp::path!("user" / "passwd")
+        .and(warp::post())
+        .and(with_auth(Role::User))
+        .and(warp::body::json())
+        .and(with_db(db.clone()))
+        .and_then(user_password_change_handler);
     let user_totp_login_route = warp::path!("user" / "totp" / "login")
         .and(warp::post())
         .and(warp::body::json())
@@ -1637,6 +1664,7 @@ async fn main() -> Result<()> {
         .or(user_whoami_route)
         .or(user_auth_route)
         .or(user_login_route)
+        .or(user_password_route)
         .or(user_totp_enable_route)
         .or(user_totp_disable_route)
         .or(user_totp_login_route)

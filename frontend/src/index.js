@@ -10,6 +10,7 @@ class Game extends HTMLElement {
             LOGOUT: `${HOST}/user/logout`,
             AUTH: `${HOST}/user/auth`,
             WHOAMI: `${HOST}/user/whoami`,
+            PASSWD: `${HOST}/user/passwd`,
             TOTP: {
                 LOGIN: `${HOST}/user/totp/login`,
                 ENABLE: `${HOST}/user/totp/enable`,
@@ -247,6 +248,15 @@ terminal-div {
             });
         };
         this.term.waitForCommand(callback);
+    }
+    async getPassword() {
+        this.print(tr('Bitte wähle ein Passwort mit mindestens 8 Zeichen Länge. Falls das gewählte Passwort in der Liste geleakter Passwörter steht, wird es der Server ablehnen.'))
+        const pwd1 = await this.getInput(tr('Passwort: '), { password: true, match: RE.PASSWORD });
+        const pwd2 = await this.getInput('Passwort bestätigen: ', { password: true, match: RE.PASSWORD });
+        if (pwd1 === pwd2) {
+            return pwd1;
+        }
+        this.print(tr('Die Passwörter stimmen nicht überein. Nächster Versuch ...'));
     }
     /**
      * @param {String} commandLine

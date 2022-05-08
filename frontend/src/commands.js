@@ -651,8 +651,25 @@ const COMMANDS = [
         name: CMDNAMES.PASSWD,
         roles: [ROLE.USER, ROLE.ADMIN, ROLE.DESIGNER],
         description: tr('Passwort ändern'),
-        fn: async function() {
-            this.print('NOCH NICHT IMPLEMENTIERT');
+        args: [
+            {
+                name: 'password',
+                type: 'optional_password',
+            },
+        ],
+        fn: async function(params) {
+            let [password] = params;
+            while (typeof password === 'undefined') {
+                password = await this.getPassword();
+            }
+            const reply = await authenticatedRequest(Game.URL.USER.PASSWD, 'POST', {password}).then(response => response.json());
+            if (reply.ok) {
+                this.print(tr('Passwort geändert.'));
+            }
+            else {
+                this.print(tr(`Ändern des Passworts fehlgeschlagen: ${reply.message}.`));
+                return Promise.reject();
+            }
             return Promise.resolve();
         },
     },
@@ -703,16 +720,8 @@ const COMMANDS = [
             if (typeof email === 'undefined') {
                 email = await this.getInput(tr('Mailadresse: '), { match: RE.EMAIL });
             }
-            if (typeof password === 'undefined') {
-                this.print(tr('Bitte wähle ein Passwort mit mindestens 8 Zeichen Länge. Falls das gewählte Passwort in der Liste geleakter Passwörter steht, wird es der Server ablehnen.'))
-                const pwd1 = await this.getInput(tr('Passwort: '), { password: true, match: RE.PASSWORD });
-                const pwd2 = await this.getInput('Passwort bestätigen: ', { password: true, match: RE.PASSWORD });
-                if (pwd1 !== pwd2) {
-                    this.print(tr('Die Passwörter stimmen nicht überein. Nächster Versuch ...'));
-                }
-                else {
-                    password = pwd1;
-                }
+            while (typeof password === 'undefined') {
+                password = Game.getPassword();
             }
             let data = {
                 username: username,

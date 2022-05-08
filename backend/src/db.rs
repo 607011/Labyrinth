@@ -2,7 +2,7 @@
  * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
  * All rights reserved.
  */
-use crate::{auth::Role, b64, error::Error::*, Result};
+use crate::{auth::Role, b64, error::Error::*, passwd::Password, Result};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use futures::stream::StreamExt;
@@ -916,6 +916,35 @@ impl DB {
         {
             Ok(_) => {
                 println!("Updated {}.", &user.username);
+                Ok(())
+            }
+            Err(e) => {
+                println!("Error: update failed ({:?})", &e);
+                Err(MongoQueryError(e))
+            }
+        }
+    }
+
+    pub async fn set_user_password(&mut self, username: &String, password: &String) -> Result<()> {
+        let hash = match Password::hash(password) {
+            Ok(hash) => hash,
+            Err(e) => return Err(e),
+        };
+        match self
+            .get_users_coll()
+            .update_one(
+                doc! { "username": username, "activated": true },
+                doc! {
+                    "$set": {
+                        "hash": hash,
+                    },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(_) => {
+                println!("Updated {}.", username);
                 Ok(())
             }
             Err(e) => {
