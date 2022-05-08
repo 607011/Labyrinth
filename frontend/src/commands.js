@@ -748,10 +748,8 @@ const COMMANDS = [
             if (userData.recovery_keys) {
                 this.print(tr(`Hier sind deine ${userData.recovery_keys.length} Wiederherstellungsschlüssel für den Fall, dass du dein Passwort vergisst:`));
                 this.print();
-                for (const key of userData.recovery_keys) {
-                    this.print(`    ${key}`);
-                }
-                this.print(tr('\nVerwahre sie bitte sicher! Sie werden dir hier das erste und letzte Mal angezeigt.'));
+                this.print(userData.recovery_keys.map((key, idx) => `  ${(idx+1).toString().padStart(2, ' ')}.  ${key}`).join('<br>'));
+                this.print(tr('\nVerwahre sie bitte sicher, inklusive ihrer Folgenummer! Sie werden dir hier das erste und letzte Mal angezeigt.'));
             }
             return Promise.resolve();
         },
