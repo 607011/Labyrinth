@@ -67,6 +67,14 @@ pub enum Error {
     RiddleNotSolvedError,
     #[error("wrong credentials")]
     WrongCredentialsError,
+    #[error("unsufficient rights")]
+    UnsufficentRightsError,
+    #[error("cannot change user's role")]
+    CannotPromoteUserError,
+    #[error("user cannot change own role")]
+    UserCannotChangeOwnRoleError,
+    #[error("cannot change to same or lower-ranked role")]
+    CannotChangeToSameRole,
     #[error("pointless FIDO2")]
     PointlessFido2Error,
     #[error("pointless TOTP")]

@@ -55,7 +55,7 @@ lazy_static! {
     static ref JWT_KEY: JwtSecretKey = JwtSecretKey::new_from_file("JWT_SECRET_KEY");
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, PartialOrd)]
 pub enum Role {
     User,
     Designer,
@@ -63,12 +63,33 @@ pub enum Role {
 }
 
 impl Role {
+    const RANKING: &'static [&'static Role] = &[&Role::User, &Role::Designer, &Role::Admin];
     pub fn from_str(role: &str) -> Role {
-        match role {
-            "Admin" => Role::Admin,
-            "Designer" => Role::Designer,
+        match role.to_ascii_lowercase().as_str() {
+            "admin" => Role::Admin,
+            "designer" => Role::Designer,
             _ => Role::User,
         }
+    }
+    pub fn lt(&self, other: &Self) -> bool {
+        let a = Role::RANKING.iter().position(|&r| r == self);
+        let b = Role::RANKING.iter().position(|&r| r == other);
+        a < b
+    }
+    pub fn le(&self, other: &Self) -> bool {
+        let a = Role::RANKING.iter().position(|&r| r == self);
+        let b = Role::RANKING.iter().position(|&r| r == other);
+        a <= b
+    }
+    pub fn gt(&self, other: &Self) -> bool {
+        let a = Role::RANKING.iter().position(|&r| r == self);
+        let b = Role::RANKING.iter().position(|&r| r == other);
+        a > b
+    }
+    pub fn ge(&self, other: &Self) -> bool {
+        let a = Role::RANKING.iter().position(|&r| r == self);
+        let b = Role::RANKING.iter().position(|&r| r == other);
+        a >= b
     }
 }
 

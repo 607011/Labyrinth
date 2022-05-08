@@ -1,5 +1,8 @@
 class Game extends HTMLElement {
     static URL = {
+        ADMIN: {
+            PROMOTE: `${HOST}/admin/promote/:username/:role`,
+        },
         USER: {
             REGISTER: `${HOST}/user/register`,
             ACTIVATE: `${HOST}/user/activate`,

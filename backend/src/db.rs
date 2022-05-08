@@ -8,6 +8,7 @@ use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use futures::stream::StreamExt;
 use mongodb::bson::doc;
 use mongodb::options::{ClientOptions, FindOneOptions, UpdateOptions};
+use mongodb::results::UpdateResult;
 use mongodb::{Client, Collection, Database};
 use rand::{distributions::Distribution, Rng};
 use serde::{Deserialize, Serialize};
@@ -545,8 +546,13 @@ impl DB {
             "username_or_email_taken(); username = {}, email = {}",
             username, email
         );
-        let user: Option<User> = match self
-            .get_users_coll()
+        #[derive(Debug, Serialize, Deserialize)]
+        struct UserId {
+            _id: ObjectId,
+        }
+        let user: Option<UserId> = match self
+            .get_database()
+            .collection::<UserId>(&self.coll_users)
             .find_one(
                 doc! {
                     "$or": vec![
@@ -554,7 +560,7 @@ impl DB {
                         doc! { "email": email }
                     ]
                 },
-                None,
+                FindOneOptions::builder().build(),
             )
             .await
         {
@@ -565,8 +571,38 @@ impl DB {
             }
         };
         match user {
-            Some(_user) => Ok(true),
+            Some(_) => Ok(true),
             None => Ok(false),
+        }
+    }
+
+    pub async fn get_user_role(&self, username: &String) -> Result<Role> {
+        println!("get_user_role(); username = {}", username);
+        #[derive(Debug, Serialize, Deserialize)]
+        struct UserRole {
+            _id: ObjectId,
+            role: Role,
+        }
+        let user: Option<UserRole> = match self
+            .get_database()
+            .collection::<UserRole>(&self.coll_users)
+            .find_one(
+                doc! { "username": username },
+                FindOneOptions::builder()
+                    .projection(doc! { "role": 1u32 })
+                    .build(),
+            )
+            .await
+        {
+            Ok(user) => user,
+            Err(e) => {
+                println!("{:?}", &e);
+                return Err(MongoQueryError(e));
+            }
+        };
+        match user {
+            Some(user) => Ok(user.role),
+            None => Err(UserNotFoundError),
         }
     }
 
@@ -828,6 +864,30 @@ impl DB {
         {
             Ok(_) => Ok(()),
             Err(e) => Err(MongoQueryError(e)),
+        }
+    }
+
+    pub async fn promote_user(&mut self, username: &String, role: &Role) -> Result<()> {
+        let result: UpdateResult = match self
+            .get_users_coll()
+            .update_one(
+                doc! { "username": username, "activated": true },
+                doc! {
+                    "$set": { "role": bson::to_bson(role).unwrap() },
+                },
+                None,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        match result {
+            result if result.matched_count == 0 => Err(UserNotFoundError),
+            result if result.matched_count == 1 && result.modified_count == 0 => {
+                Err(CannotPromoteUserError)
+            }
+            _ => Ok(()),
         }
     }
 

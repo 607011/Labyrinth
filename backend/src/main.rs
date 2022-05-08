@@ -375,6 +375,14 @@ struct MFARequiredResponse {
     pub configured_2fa: Vec<SecondFactor>,
 }
 
+#[derive(Serialize, Debug)]
+struct PromoteUserResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub username: String,
+    pub role: Role,
+}
+
 fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
     let reply = warp::reply::json(&json!(&StatusResponse {
         ok: false,
@@ -525,7 +533,7 @@ pub async fn riddle_solve_handler(
     username: String,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    let solution = url_escape::decode(&body.solution);
+    let solution = url_escape::decode(&body.solution).into_owned();
     println!(
         "riddle_solve_handler(); riddle_id = {}, solution = {}",
         &riddle_id_str, &solution
@@ -785,13 +793,57 @@ pub async fn game_stats_handler(
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
+pub async fn promote_user_handler(
+    user_to_promote: String,
+    role: String,
+    username: String,
+    mut db: DB,
+) -> WebResult<impl Reply> {
+    let user_to_promote = url_escape::decode(&user_to_promote).into_owned();
+    let role = Role::from_str(&url_escape::decode(&role).into_owned());
+    println!(
+        "promote_user_handler() username = {}, user_to_promote = {}, role = {}",
+        username, user_to_promote, role
+    );
+    if user_to_promote == username {
+        return Err(reject::custom(Error::UserCannotChangeOwnRoleError));
+    }
+    let current_role = match db.get_user_role(&user_to_promote).await {
+        Ok(role) => role,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    dbg!(&current_role);
+    let user: User = match db.get_user(&username).await {
+        Ok(user) => user,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    dbg!(&user.role);
+    if role <= current_role {
+        return Err(reject::custom(Error::CannotChangeToSameRole));
+    }
+    if user.role != Role::Admin {
+        return Err(reject::custom(Error::UnsufficentRightsError));
+    }
+    match db.promote_user(&user_to_promote, &role).await {
+        Ok(()) => (),
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let reply: warp::reply::Json = warp::reply::json(&json!(&PromoteUserResponse {
+        ok: true,
+        message: Option::default(),
+        username: user_to_promote,
+        role,
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
 // This function is needed for manual debugging.
 pub async fn riddle_get_by_level_handler(
     level: u32,
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("riddle_get_by_level_handler() {}", level);
+    println!("riddle_get_by_level_handler(); level = {}", level);
     let riddle: Option<Riddle> = match db.get_riddle_by_level(level).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
@@ -1564,16 +1616,22 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and_then(cheat_handler);
     /* Routes accessible only to authorized admins */
-    let riddle_get_by_level_route = warp::path!("riddle" / "by" / "level" / u32)
+    let riddle_get_by_level_route = warp::path!("admin" / "riddle" / "by" / "level" / u32)
         .and(warp::get())
         .and(with_auth(Role::Admin))
         .and(with_db(db.clone()))
         .and_then(riddle_get_by_level_handler);
+    let promote_user_route = warp::path!("admin" / "promote" / String / String)
+        .and(warp::get())
+        .and(with_auth(Role::Admin))
+        .and(with_db(db.clone()))
+        .and_then(promote_user_handler);
 
     let routes = root
         .or(riddle_get_by_oid_route)
         .or(debriefing_get_by_riddle_id_route)
         .or(riddle_get_by_level_route)
+        .or(promote_user_route)
         .or(riddle_solve_route)
         .or(go_route)
         .or(user_whoami_route)

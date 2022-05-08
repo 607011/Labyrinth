@@ -20,8 +20,42 @@ const CMDNAMES = {
     HIGHSCORE: 'highscore',
     REGISTER: 'register',
     PASSWD: 'passwd',
+    PROMOTE: 'promote',
 };
 const COMMANDS = [
+    {
+        name: CMDNAMES.PROMOTE,
+        roles: [ROLE.ADMIN],
+        args: [
+            {
+                name: 'username',
+                type: 'string',
+            },
+            {
+                name: 'role',
+                type: 'string',
+            },
+        ],
+        description: tr('Einen User hochstufen, z.B. zum `Designer` oder `Admin`'),
+        fn: async function(params) {
+            let [username, role] = params;
+            while (typeof username === 'undefined') {
+                username = await this.getInput(tr('Benutzername: '), { match: RE.USERNAME });
+            }
+            while (typeof role === 'undefined') {
+                role = await this.getInput(tr('Rolle: '), { match: RE.ROLE });
+            }
+            let reply = await authenticatedRequest(constructURL(Game.URL.ADMIN.PROMOTE, {username, role}))
+                .then(result => result.json());
+            if (reply.ok) {
+                this.print(tr(`User ${reply.username} wurde zum ${reply.role} ernannt.`));
+                this.print(tr(`Der User muss sich neu anmelden, damit die Änderung wirksam wird.`));
+            }
+            else {
+                this.print(tr(`Beförderung fehlgeschlagen: ${reply.message}.`));
+            }
+        },
+    },
     {
         name: CMDNAMES.RIDDLE,
         roles: [ROLE.ADMIN, ROLE.DESIGNER],
