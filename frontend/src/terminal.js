@@ -2,9 +2,9 @@ class Terminal extends HTMLElement {
     constructor() {
         super();
         this._prompt = '> ';
-        this.textarea = null;
         this._commands = [];
         this.historyMax = 100;
+        this.currentTextarea = null;
         this.loadHistory();
         const shadowRoot = this.attachShadow({ mode: 'open' });
         this.el = document.createElement('div');
@@ -230,9 +230,9 @@ strong, .b700 {
         this.write(this.prompt);
     }
     enter(text) {
-        this.textarea.value = text;
-        this.textarea.dispatchEvent(new Event('input'));
-        this.textarea.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+        this.currentTextarea.value = text;
+        this.currentTextarea.dispatchEvent(new Event('input'));
+        this.currentTextarea.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
     }
     /**
      * @param {{}} param
@@ -282,7 +282,7 @@ strong, .b700 {
                 const value = param.password ? '•'.repeat(textarea.value.length) : textarea.value;
                 if (textarea.selectionStart < value.length) {
                     cmdSpan.textContent = value.substring(0, textarea.selectionStart);
-                    cursor.textContent = value.substring(textarea.selectionStart, this.textarea.selectionStart+1);
+                    cursor.textContent = value.substring(textarea.selectionStart, textarea.selectionStart+1);
                     tailSpan.textContent = value.substring(textarea.selectionStart);
                 }
                 else {
@@ -370,11 +370,19 @@ strong, .b700 {
         div.appendChild(tailSpan);
         div.appendChild(suggSpan);
         this.el.appendChild(div);
+        let textarea = document.createElement('textarea');
+        this.currentTextarea = textarea;
+        textarea.className = 'input-helper active';
+        textarea.setAttribute('autocorrect', 'off');
+        textarea.setAttribute('autocapitalize', 'off');
+        textarea.setAttribute('spellcheck', 'off');
+        textarea.setAttribute('tabindex', 0);
+        this.el.appendChild(textarea);
         let suggestion = '';
         const onFocus = e => {
             e.preventDefault();
             e.stopImmediatePropagation();
-            this.textarea.focus();
+            textarea.focus();
             this.el.classList.remove('blurred');
             return true;
         };
@@ -382,7 +390,7 @@ strong, .b700 {
             this.el.classList.add('blurred');
         };
         const onMouseup = e => {
-            this.textarea.focus();
+            textarea.focus();
             this.el.classList.remove('blurred');
             e.stopPropagation();
             e.preventDefault();
@@ -391,13 +399,13 @@ strong, .b700 {
         window.addEventListener('blur', onBlur);
         window.addEventListener('mouseup', onMouseup);
         const updateTextarea = () => {
-            if (this.textarea.selectionStart < this.textarea.value.length) {
-                cmdSpan.textContent = this.textarea.value.substring(0, this.textarea.selectionStart);
-                cursor.textContent = this.textarea.value.substring(this.textarea.selectionStart, this.textarea.selectionStart+1);
-                tailSpan.textContent = this.textarea.value.substring(this.textarea.selectionStart);
+            if (textarea.selectionStart < textarea.value.length) {
+                cmdSpan.textContent = textarea.value.substring(0, textarea.selectionStart);
+                cursor.textContent = textarea.value.substring(textarea.selectionStart, textarea.selectionStart+1);
+                tailSpan.textContent = textarea.value.substring(textarea.selectionStart);
             }
             else {
-                cmdSpan.textContent = this.textarea.value;
+                cmdSpan.textContent = textarea.value;
                 cursor.innerHTML = '&nbsp;';
                 tailSpan.textContent = '';
             }
@@ -413,20 +421,21 @@ strong, .b700 {
                     cmdSpan.classList.remove('input');
                     cursor.remove();
                     suggSpan.remove();
-                    tailSpan.remove();
-                    this.textarea.removeEventListener('input', onInput);
-                    this.textarea.removeEventListener('keyup', onKeyup);
-                    this.textarea.removeEventListener('keydown', onKeydown);
+                    textarea.removeEventListener('input', onInput);
+                    textarea.removeEventListener('keyup', onKeyup);
+                    textarea.removeEventListener('keydown', onKeydown);
+                    textarea.classList.remove('active');
+                    this.currentTextarea = null;
                     this.writeln();
-                    this.addToHistory(this.textarea.value);
-                    callback(this.textarea.value);
-                    this.textarea.value = '';
+                    this.addToHistory(textarea.value);
+                    callback(textarea.value);
+                    textarea.value = '';
                     e.stopPropagation();
                     e.preventDefault();
                     break;
                 case 'Tab':
                     if (suggestion && suggestion.length > 0) {
-                        this.textarea.value = suggestion;
+                        textarea.value = suggestion;
                         cmdSpan.textContent = suggestion;
                         suggSpan.textContent = '';
                     }
@@ -435,7 +444,7 @@ strong, .b700 {
                     break;
                 default:
                     if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.cmdKey) {
-                        const fragment = this.textarea.value + e.key;
+                        const fragment = textarea.value + e.key;
                         if (fragment.length > 0) {
                             suggestion = this.commands.find(c => c.startsWith(fragment));
                             suggSpan.textContent = suggestion ? suggestion.substring(fragment.length) : '';
@@ -449,7 +458,7 @@ strong, .b700 {
                 case 'ArrowUp':
                     if (this.historyIndex > 0) {
                         --this.historyIndex;
-                        this.textarea.value = this.history[this.historyIndex];
+                        textarea.value = this.history[this.historyIndex];
                         cmdSpan.textContent = this.history[this.historyIndex];
                         tailSpan.textContent = '';
                         suggSpan.textContent = '';
@@ -460,7 +469,7 @@ strong, .b700 {
                 case 'ArrowDown':
                     if (this.historyIndex < this.history.length-1) {
                         ++this.historyIndex;
-                        this.textarea.value = this.history[this.historyIndex];
+                        textarea.value = this.history[this.historyIndex];
                         cmdSpan.textContent = this.history[this.historyIndex];
                         tailSpan.textContent = '';
                         suggSpan.textContent = '';
@@ -477,19 +486,10 @@ strong, .b700 {
                     break;
                 }
         };
-        if (this.textarea === null) {
-            this.textarea = document.createElement('textarea');
-            this.textarea.className = 'input-helper';
-            this.textarea.setAttribute('autocorrect', 'off');
-            this.textarea.setAttribute('autocapitalize', 'off');
-            this.textarea.setAttribute('spellcheck', 'off');
-            this.textarea.setAttribute('tabindex', 0);
-            this.el.appendChild(this.textarea);
-        }
-        this.textarea.addEventListener('input', onInput);
-        this.textarea.addEventListener('keyup', onKeyup);
-        this.textarea.addEventListener('keydown', onKeydown);
-        this.textarea.focus();
+        textarea.addEventListener('input', onInput);
+        textarea.addEventListener('keyup', onKeyup);
+        textarea.addEventListener('keydown', onKeydown);
+        textarea.focus();
         setTimeout(function() { window.scrollTo(0, this.scrollHeight); }.bind(this), 100);
     }
     clear() {
