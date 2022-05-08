@@ -145,10 +145,10 @@ strong, .b700 {
         };
     }
     connectedCallback() {
-        window.addEventListener('unload', this.boundSaveHistory);
+        window.addEventListener('pagehide', this.boundSaveHistory);
     }
     disconnectedCallback() {
-        window.removeEventListener('unload', this.boundSaveHistory);
+        window.removeEventListener('pagehide', this.boundSaveHistory);
     }
     attributeChangedCallback(attrName, oldVal, newVal) {
     }
