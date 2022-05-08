@@ -283,6 +283,7 @@ terminal-div {
     set user(user) {
         this._user = user;
         this.term.prompt = this.prompt;
+        this.term.commands = Game.COMMANDS.filter(cmd => cmd.roles.includes(user.role)).map(cmd => cmd.name);
         if (this.user === null) {
             this.login_state_el.textContent = tr(`nicht angemeldet`);
         }
@@ -757,7 +758,8 @@ let main = () => {
         customElements.define('progress-bar', ProgressBar);
         const game = document.querySelector('game-div');
         game.classList.remove('hidden');
-        game.term.setCommands(Game.COMMANDS.map(cmd => cmd.name));
+        console.debug(Game.COMMANDS);
+        game.term.commands = Game.COMMANDS.filter(cmd => cmd.roles.includes(null)).map(cmd => cmd.name);
         game.play();
     }
     else {

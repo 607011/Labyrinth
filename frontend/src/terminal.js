@@ -167,10 +167,7 @@ strong, .b700 {
     get commands() {
         return this._commands;
     }
-    /**
-     * @param {String[]} commands
-     */
-    setCommands(commands) {
+    set commands(commands) {
         this._commands = commands;
     }
     trimHistory() {
