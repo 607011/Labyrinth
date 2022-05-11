@@ -62,6 +62,12 @@ pub enum Role {
     Admin,
 }
 
+impl Default for Role {
+    fn default() -> Self {
+        Role::User
+    }
+}
+
 impl Role {
     const RANKING: &'static [&'static Role] = &[&Role::User, &Role::Designer, &Role::Admin];
     pub fn from_str(role: &str) -> Role {
