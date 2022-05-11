@@ -769,10 +769,13 @@ pub async fn riddle_get_oid_handler(
 
 pub async fn game_stats_handler(
     game_id_str: String,
-    _username: String,
+    username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("game_stats_handler(); game_id = {}", &game_id_str);
+    println!(
+        "game_stats_handler(); game_id = {}, username = {}",
+        &game_id_str, &username
+    );
     let game_id: bson::oid::ObjectId = match ObjectId::parse_str(game_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
