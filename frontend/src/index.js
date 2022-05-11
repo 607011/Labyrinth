@@ -512,7 +512,6 @@ terminal-div {
         return factors[choice-1];
     }
     async loginTOTP(username, totp) {
-        console.debug(`loginTOTP("${username}", "${totp}")`);
         const response = await fetch(Game.URL.USER.TOTP.LOGIN, {
             method: 'POST',
             cache: 'no-cache',
@@ -598,7 +597,6 @@ terminal-div {
         return Promise.resolve();
     }
     async enableFIDO2(username) {
-        console.debug(`enableFIDO2("${username}")`);
         const reply = await authenticatedRequest(Game.URL.USER.WEBAUTHN.REGISTER.START, 'POST')
         .then(response => response.json())
         .then(data => {
@@ -758,7 +756,6 @@ let main = () => {
         customElements.define('progress-bar', ProgressBar);
         const game = document.querySelector('game-div');
         game.classList.remove('hidden');
-        console.debug(Game.COMMANDS);
         game.term.commands = Game.COMMANDS.filter(cmd => cmd.roles.includes(null)).map(cmd => cmd.name);
         game.play();
     }
