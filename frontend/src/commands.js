@@ -611,7 +611,7 @@ const COMMANDS = [
             }
             const userData = await this.activate(username, pin);
             if (userData.ok === false) {
-                this.print('Das war nix. Entweder stimmte der Benutzername nicht oder die PIN - der der Benutzer wurde bereits aktiviert.');
+                this.print('Das war nix. Entweder stimmte der Benutzername nicht oder die PIN - oder der Benutzer wurde bereits aktiviert.');
                 return Promise.reject();
             }
             this.proceedWith2FA(userData);
