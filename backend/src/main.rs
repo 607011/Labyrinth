@@ -329,9 +329,9 @@ pub struct SteppedThroughResponse {
 pub struct GameStatsResponse {
     pub ok: bool,
     pub message: Option<String>,
-    pub num_rooms: i32,
-    pub num_riddles: i32,
-    pub max_score: i32,
+    pub num_rooms: u32,
+    pub num_riddles: u32,
+    pub max_score: u32,
 }
 
 #[derive(Serialize, Debug)]
@@ -780,24 +780,24 @@ pub async fn game_stats_handler(
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
     };
-    let num_rooms: Option<i32> = match db.get_num_rooms(&game_id).await {
+    let num_rooms: u32 = match db.get_num_rooms(&game_id).await {
         Ok(num_rooms) => num_rooms,
         Err(e) => return Err(reject::custom(e)),
     };
-    let num_riddles: Option<i32> = match db.get_num_riddles(&game_id).await {
+    let num_riddles: u32 = match db.get_num_riddles(&game_id).await {
         Ok(num_riddles) => num_riddles,
         Err(e) => return Err(reject::custom(e)),
     };
-    let max_score: Option<i32> = match db.get_max_score(&game_id).await {
+    let max_score: u32 = match db.get_max_score_for_game(&game_id).await {
         Ok(max_score) => max_score,
         Err(e) => return Err(reject::custom(e)),
     };
     let reply: warp::reply::Json = warp::reply::json(&json!(&GameStatsResponse {
         ok: true,
         message: Option::default(),
-        num_rooms: num_rooms.unwrap_or(0),
-        num_riddles: num_riddles.unwrap_or(0),
-        max_score: max_score.unwrap_or(0),
+        num_rooms: num_rooms,
+        num_riddles: num_riddles,
+        max_score: max_score,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
