@@ -5,9 +5,9 @@
 use crate::{auth::Role, b64, error::Error::*, passwd::Password, Result};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use futures::stream::StreamExt;
+use futures::stream::{StreamExt, TryStreamExt};
 use mongodb::bson::doc;
-use mongodb::options::{ClientOptions, FindOneOptions, UpdateOptions};
+use mongodb::options::{ClientOptions, FindOneOptions, FindOptions, UpdateOptions};
 use mongodb::results::UpdateResult;
 use mongodb::{Client, Collection, Database};
 use rand::{distributions::Distribution, Rng};
@@ -201,6 +201,23 @@ pub struct User {
     pub webauthn: WebauthnManagementData,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct UserScoreData {
+    #[serde(rename = "_id")]
+    pub id: ObjectId,
+    pub username: String,
+    #[serde(default)]
+    pub solved: Vec<RiddleAttempt>,
+    #[serde(default)]
+    pub current_riddle_attempt: Option<RiddleAttempt>,
+    #[serde(default)]
+    pub level: u32,
+    #[serde(default)]
+    pub score: u32,
+    #[serde(default)]
+    pub in_room: Option<ObjectId>,
+}
+
 impl User {
     pub fn new(
         username: &String,
@@ -295,19 +312,52 @@ impl DB {
         self.get_database().collection::<Room>(&self.coll_rooms)
     }
 
-    pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<Option<i32>> {
+    pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<u32> {
         println!("get_num_rooms(); game_id = {}", game_id);
         match self
             .get_rooms_coll()
             .count_documents(doc! { "game_id": game_id }, None)
             .await
         {
-            Ok(count) => Ok(Some(count as i32)),
+            Ok(count) => Ok(count as u32),
             Err(_) => return Err(RoomNotFoundError),
         }
     }
 
-    pub async fn get_max_score(&self, game_id: &ObjectId) -> Result<Option<i32>> {
+    pub async fn get_all_user_scores(&self) -> Result<Vec<UserScoreData>> {
+        println!("get_all_user_scores()");
+        let cursor: mongodb::Cursor<UserScoreData> = match self
+            .get_database()
+            .collection::<UserScoreData>(&self.coll_users)
+            .find(
+                doc! { "activated": true },
+                FindOptions::builder()
+                    .projection(doc! {
+                        "username": 1u32,
+                        "solved": 1u32,
+                        "current_riddle_attempt": 1u32,
+                        "level": 1u32,
+                        "score": 1u32,
+                        "in_room": 1u32,
+                    })
+                    .sort(doc! {
+                        "score": 1u32,
+                    })
+                    .build(),
+            )
+            .await
+        {
+            Ok(cursor) => cursor,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        let users = match cursor.try_collect().await {
+            Ok(users) => users,
+            Err(e) => return Err(MongoError(e)),
+        };
+        Ok(users)
+    }
+
+    pub async fn get_max_score_for_game(&self, game_id: &ObjectId) -> Result<u32> {
         println!("get_max_score(); game_id = {}", game_id);
         let mut cursor: mongodb::Cursor<bson::Document> = match self
             .get_rooms_coll()
@@ -355,20 +405,20 @@ impl DB {
         };
         let result = match cursor.next().await {
             Some(result) => result,
-            None => return Ok(Option::default()),
+            None => return Ok(0),
         };
         let doc: bson::Document = match result {
             Ok(doc) => doc,
             Err(e) => return Err(MongoError(e)),
         };
         let total = match doc.get("total") {
-            Some(total) => total.as_i32(),
-            None => return Ok(Option::default()),
+            Some(total) => total.as_i32().unwrap_or(0) as u32,
+            None => 0,
         };
         Ok(total)
     }
 
-    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<Option<i32>> {
+    pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<u32> {
         println!("get_num_riddles(); game_id = {}", game_id);
         let mut cursor: mongodb::Cursor<bson::Document> = match self
             .get_rooms_coll()
@@ -390,7 +440,7 @@ impl DB {
                     doc! {
                         "$group": {
                             "_id": bson::Bson::Null,
-                            "count": { "$sum": 1i32 }
+                            "count": { "$sum": 1u32 }
                         }
                     },
                 ],
@@ -403,17 +453,17 @@ impl DB {
         };
         let result = match cursor.next().await {
             Some(result) => result,
-            None => return Ok(Option::default()),
+            None => return Ok(0),
         };
         let doc: bson::Document = match result {
             Ok(doc) => doc,
             Err(e) => return Err(MongoError(e)),
         };
-        let result = match doc.get("count") {
-            Some(count) => count.as_i32(),
-            None => return Ok(Option::default()),
+        let count = match doc.get("count") {
+            Some(count) => count.as_i32().unwrap_or(0) as u32,
+            None => 0,
         };
-        Ok(result)
+        Ok(count)
     }
 
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
