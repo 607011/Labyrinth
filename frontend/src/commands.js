@@ -118,7 +118,7 @@ const COMMANDS = [
                                 break;
                             case 'text/markdown':
                                 this.print(parseMarkdown(atob(f.data)));
-                                this.term.container.appendChild(makeDownloadLink(f.data));
+                                this.term.container.appendChild(makeDownloadLink(f, f.data));
                                 break;
                             case 'text/plain':
                                 // fall-through
