@@ -23,20 +23,31 @@ pub type PinType = u32;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UploadedFileVariant {
-    #[serde(rename = "fileId")]
-    pub file_id: ObjectId,
-    pub name: String,
+    #[serde(rename = "originalName")]
+    pub original_name: String,
+    #[serde(rename = "uploadedName")]
+    pub uploaded_name: String,
     pub scale: u32,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct UploadedFile {
+pub struct UploadedScript {
     #[serde(rename = "fileId")]
     pub file_id: ObjectId,
     pub name: String,
-    pub retina: Option<String>,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct UploadedFile {
+    #[serde(rename = "originalName")]
+    pub original_name: String,
+    #[serde(rename = "uploadedName")]
+    pub uploaded_name: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub retina: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub scale: Option<u32>,
@@ -64,6 +75,8 @@ pub struct Riddle {
     pub task: Option<String>,
     #[serde(default)]
     pub credits: Option<String>,
+    #[serde(default)]
+    pub script: Option<UploadedScript>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -150,7 +163,7 @@ impl WebauthnManagementData {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone, Copy)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct RiddleAttempt {
     pub riddle_id: ObjectId,
     #[serde(default)]
@@ -159,6 +172,8 @@ pub struct RiddleAttempt {
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
     pub t_solved: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub scripted_solution: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

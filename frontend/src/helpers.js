@@ -5,7 +5,6 @@
     return (Date.now() / 1000) | 0;
 }
 
-
 /**
  * @param {String} template - the URL template, e.g. "/user/get/by/:userid"
  * @param {object} params - an object: the values of the properties replace the placeholders in the URL with the same name as the properties'
@@ -20,26 +19,40 @@ const constructURL = (template, params) => {
     return url;
 };
 
-
 /**
  * Construct a HTML element that, when clicked, will initiate a download of a file.
  * 
  * @param file {object} - object containing information about the file
- * @param b64data {String} - the Base64-encoded contents of the file.
  * @returns {HTMLSpanElement} the constructed HTML element
  */
-const makeDownloadLink = (file, b64data) => {
+const makeDownloadLink = (file) => {
     let span = document.createElement('div');
     span.textContent = '-> ';
     let a = document.createElement('a');
     a.download = file.name;
-    a.title = `Download image as ${file.name}`;
-    a.href = `data:${file.mimeType};base64,${b64data}`;
-    a.textContent = `Download ${file.name}`;
+    a.title = `Download image as ${file.originalName}`;
+    a.href = `${UPLOAD_FOLDER}/${file.uploadedName}`;
+    a.textContent = `Download ${file.originalName}`;
     span.appendChild(a);
     return span;
 };
 
+/**
+ * Construct a HTML element that, when clicked, will initiate a download of a file.
+ * 
+ * @returns {HTMLSpanElement} the constructed HTML element
+ */
+ const makeDownloadLinkMime = (text, filename, mimetype) => {
+    let span = document.createElement('div');
+    span.textContent = '-> ';
+    let a = document.createElement('a');
+    a.download = filename;
+    a.title = 'Download task as file';
+    a.href = `data:${mimetype};base64,${Base64.encode(text)}`;
+    a.textContent = `Download task as file '${filename}'`;
+    span.appendChild(a);
+    return span;
+};
 
 class Base64 {
     static encode(string) {
@@ -69,24 +82,6 @@ const arrayToBase64 = value => {
         .replace(/\//g, "_")
         .replace(/=/g, "");;
 }
-
-/**
- * Construct a HTML element that, when clicked, will initiate a download of a file.
- * 
- * @returns {HTMLSpanElement} the constructed HTML element
- */
-const makeDownloadLinkMime = (text, filename, mimetype) => {
-    let span = document.createElement('div');
-    span.textContent = '-> ';
-    let a = document.createElement('a');
-    a.download = filename;
-    a.title = 'Download task as file';
-    a.href = `data:${mimetype};base64,${Base64.encode(text)}`;
-    a.textContent = `Download task as file '${filename}'`;
-    span.appendChild(a);
-    return span;
-};
-
 
 /**
  * @param {String} text

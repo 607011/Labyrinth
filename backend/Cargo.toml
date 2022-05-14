@@ -43,6 +43,7 @@ qrcode-generator = ">= 4.1.4"
 totp-lite = ">= 1.0.3"
 url = ">= 2.2.2"
 webauthn-rs = ">= 0.3.2"
+rlua = ">= 0.19.1"
 
 [dependencies.mongodb]
 version = ">= 2.1.0"

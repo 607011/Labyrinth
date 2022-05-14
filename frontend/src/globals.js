@@ -5,6 +5,12 @@ const HOST = (function(window) {
         default: return 'http://127.0.0.1:18080';
     }
 })(window);
+const UPLOAD_FOLDER = (function(window) {
+    switch (window.location.hostname) {
+        case 'labyrinth.raetselonkel.de': return 'https://labyrinth.raetselonkel.de/external/upload';
+        default: return 'http://127.0.0.1:8080/Labyrinth/frontend/dist/upload';
+    }
+})(window);
 // TODO: localise strings
 const tr = (text) => text;
 const RE = {

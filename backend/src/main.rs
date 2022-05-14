@@ -19,6 +19,7 @@ use qrcode_generator::QrCodeEcc;
 use rand::Rng;
 use rand_core::{OsRng, RngCore};
 use regex::Regex;
+use rlua;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -265,9 +266,10 @@ pub struct UserWhoamiResponse {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileVariantResponse {
-    pub name: String,
-    #[serde(with = "b64")]
-    pub data: Vec<u8>,
+    #[serde(rename = "originalName")]
+    pub original_name: String,
+    #[serde(rename = "uploadedName")]
+    pub uploaded_name: String,
     pub scale: Option<u32>,
 }
 
@@ -275,10 +277,10 @@ pub struct FileVariantResponse {
 pub struct FileResponse {
     pub ok: bool,
     pub message: Option<String>,
-    pub id: ObjectId,
-    pub name: String,
-    #[serde(with = "b64")]
-    pub data: Vec<u8>,
+    #[serde(rename = "originalName")]
+    pub original_name: String,
+    #[serde(rename = "uploadedName")]
+    pub uploaded_name: String,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
     pub width: Option<u32>,
@@ -582,6 +584,7 @@ pub async fn riddle_solve_handler(
             riddle_id: riddle.id,
             t0: riddle_attempt.t0,
             t_solved: Some(Utc::now()),
+            scripted_solution: Option::default(),
         });
         user.level = riddle.level.max(user.level);
         user.score += riddle.difficulty;
@@ -674,10 +677,66 @@ pub async fn riddle_get_oid_handler(
         Some(user) => user,
         None => return Err(reject::custom(Error::UserNotAssociatedWithRiddle)),
     };
+    let (scripted_task, scripted_solution): (Option<String>, Option<String>) = match riddle.script {
+        Some(ref script) => {
+            println!("trying to load script file {:?}", &script.name);
+            let bucket: mongodb_gridfs::GridFSBucket =
+                GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
+            let mut cursor = match bucket.open_download_stream(script.file_id).await {
+                Ok(cursor) => cursor,
+                Err(e) => return Err(reject::custom(Error::GridFSError(e))),
+            };
+            let mut script: Vec<u8> = Vec::new();
+            while let Some(mut chunk) = cursor.next().await {
+                script.append(&mut chunk);
+            }
+            let lua = rlua::Lua::new();
+            let (task, solution) = lua.context(|lua_ctx| {
+                match lua_ctx.load(&script).exec() {
+                    Ok(()) => (),
+                    Err(e) => {
+                        println!("{:?}", e);
+                        return (Option::default(), Option::default());
+                    }
+                }
+                let globals = lua_ctx.globals();
+                let task: Option<String> = match globals.get::<_, rlua::Function>("task") {
+                    Ok(f) => match f.call::<_, String>(()) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            println!("{:?}", e);
+                            Option::default()
+                        }
+                    },
+                    Err(e) => {
+                        println!("{:?}", e);
+                        Option::default()
+                    }
+                };
+                let solution: Option<String> = match globals.get::<_, rlua::Function>("solution") {
+                    Ok(f) => match f.call::<_, String>(()) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            println!("{:?}", e);
+                            Option::default()
+                        }
+                    },
+                    Err(e) => {
+                        println!("{:?}", e);
+                        Option::default()
+                    }
+                };
+                (task, solution)
+            });
+            (task, solution)
+        }
+        None => (Option::default(), Option::default()),
+    };
     let riddle_attempt = RiddleAttempt {
         riddle_id,
         t0: Some(Utc::now()),
         t_solved: Option::default(),
+        scripted_solution,
     };
     user.current_riddle_attempt = Some(riddle_attempt);
     dbg!(&user.current_riddle_attempt);
@@ -687,7 +746,7 @@ pub async fn riddle_get_oid_handler(
             doc! { "username": username.clone() },
             doc! {
                 "$set": {
-                    "current_riddle_attempt": Some(bson::to_bson(&riddle_attempt).unwrap()),
+                    "current_riddle_attempt": Some(bson::to_bson(&user.current_riddle_attempt).unwrap()),
                 },
             },
             None,
@@ -708,32 +767,12 @@ pub async fn riddle_get_oid_handler(
     if let Some(files) = riddle.files {
         for file in files.iter() {
             println!("trying to load file {:?}", &file);
-            let bucket: mongodb_gridfs::GridFSBucket =
-                GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
-            let mut cursor = match bucket.open_download_stream(file.file_id).await {
-                Ok(cursor) => cursor,
-                Err(e) => return Err(reject::custom(Error::GridFSError(e))),
-            };
-            let mut data: Vec<u8> = Vec::new();
-            while let Some(mut chunk) = cursor.next().await {
-                data.append(&mut chunk);
-            }
             let mut file_variants: Vec<FileVariantResponse> = Vec::new();
             if let Some(variants) = &file.variants {
                 for variant in variants {
-                    let bucket =
-                        GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
-                    let mut cursor = match bucket.open_download_stream(variant.file_id).await {
-                        Ok(cursor) => cursor,
-                        Err(e) => return Err(reject::custom(Error::GridFSError(e))),
-                    };
-                    let mut data: Vec<u8> = Vec::new();
-                    while let Some(mut chunk) = cursor.next().await {
-                        data.append(&mut chunk);
-                    }
                     file_variants.push(FileVariantResponse {
-                        name: variant.name.clone(),
-                        data: data,
+                        original_name: variant.original_name.clone(),
+                        uploaded_name: variant.uploaded_name.clone(),
                         scale: Some(variant.scale),
                     });
                 }
@@ -741,9 +780,8 @@ pub async fn riddle_get_oid_handler(
             found_files.push(FileResponse {
                 ok: true,
                 message: Option::default(),
-                id: file.file_id,
-                name: file.name.clone(),
-                data: data,
+                original_name: file.original_name.clone(),
+                uploaded_name: file.uploaded_name.clone(),
                 mime_type: file.mime_type.clone(),
                 scale: file.scale,
                 width: file.width,
@@ -752,6 +790,10 @@ pub async fn riddle_get_oid_handler(
             })
         }
     }
+    let task: Option<String> = match scripted_task {
+        Some(task) => Some(task),
+        None => riddle.task,
+    };
     let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
         ok: true,
         message: Option::default(),
@@ -761,7 +803,7 @@ pub async fn riddle_get_oid_handler(
         deduction: riddle.deduction.unwrap_or(0),
         ignore_case: riddle.ignore_case.unwrap_or(false),
         files: Option::from(found_files),
-        task: riddle.task,
+        task,
         credits: riddle.credits,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
@@ -863,28 +905,28 @@ pub async fn riddle_get_by_level_handler(
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
         for file in files.iter() {
-            println!("trying to load file {:?}", file);
-            let bucket = GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
-            let mut cursor = match bucket.open_download_stream(file.file_id).await {
-                Ok(cursor) => cursor,
-                Err(e) => return Err(reject::custom(Error::GridFSError(e))),
-            };
-            let mut data: Vec<u8> = Vec::new();
-            while let Some(mut chunk) = cursor.next().await {
-                data.append(&mut chunk);
+            println!("trying to load file {:?}", &file);
+            let mut file_variants: Vec<FileVariantResponse> = Vec::new();
+            if let Some(variants) = &file.variants {
+                for variant in variants {
+                    file_variants.push(FileVariantResponse {
+                        original_name: variant.original_name.clone(),
+                        uploaded_name: variant.uploaded_name.clone(),
+                        scale: Some(variant.scale),
+                    });
+                }
             }
             found_files.push(FileResponse {
                 ok: true,
                 message: Option::default(),
-                id: file.file_id,
-                name: file.name.clone(),
-                data: data,
+                original_name: file.original_name.clone(),
+                uploaded_name: file.uploaded_name.clone(),
                 mime_type: file.mime_type.clone(),
                 scale: file.scale,
                 width: file.width,
                 height: file.height,
-                variants: Option::default(),
-            });
+                variants: Some(file_variants),
+            })
         }
     }
     let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {

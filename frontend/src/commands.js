@@ -95,57 +95,57 @@ const COMMANDS = [
                                 // fall-through
                             case 'image/webp':
                                 const img = document.createElement('img');
-                                img.src = `data:${f.mimeType};base64,${f.data}`;
+                                img.src = `${UPLOAD_FOLDER}/${f.uploadedName}`;
                                 if (f.variants) {
-                                    img.srcset = f.variants.map(v => `data:${f.mimeType};base64,${v.data} ${v.scale}x`).join(' ');
+                                    img.srcset = f.variants.map(v => `${UPLOAD_FOLDER}/${v.uploadedName} ${v.scale}x`).join(' ');
                                 }
                                 img.style = `max-width: ${f.width}px;`;
                                 this.term.container.appendChild(img);
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'image/svg':
                             case 'image/svg+xml':
                                 let svgimg = document.createElement('img');
-                                svgimg.src = `data:image/svg+xml;base64,${f.data}`;
+                                svgimg.src = `${UPLOAD_FOLDER}/${f.uploadedName}`;
                                 this.term.container.appendChild(svgimg);
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'audio/mp3':
                                 // fall-through
                             case 'audio/flac':
-                                const dataUrl = `data:${f.mimeType};base64,${f.data}`;
+                                const dataUrl = `${UPLOAD_FOLDER}/${f.uploadedName}`;
                                 this.print(`<audio controls><source src="${dataUrl}" type="${f.mimeType}"></audio>`);
                                 break;
                             case 'text/markdown':
                                 this.print(parseMarkdown(atob(f.data)));
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'text/plain':
                                 // fall-through
                             case 'text/yaml':
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'text/html':
                                 const embed = document.createElement('embed');
-                                embed.src = `data:${f.mimeType};base64,${f.data}`;
+                                embed.src = `${UPLOAD_FOLDER}/${f.uploadedName}`;
                                 embed.type = f.mimeType;
                                 this.term.container.appendChild(embed);
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'application/octet-stream':
                                 // fall-through
                             case 'application/json':
                                 // fall-through
                             case 'application/zip':
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'application/pdf':
                                 const pdf = document.createElement('embed');
-                                pdf.src = `data:${f.mimeType};base64,${f.data}`;
+                                pdf.src = `${UPLOAD_FOLDER}/${f.uploadedName}`;
                                 pdf.type = f.mimeType;
                                 pdf.style = 'width: 100%; background-color: white';
                                 this.term.container.appendChild(pdf);
-                                this.term.container.appendChild(makeDownloadLink(f, f.data));
+                                this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'video/webm':
                             case 'video/mp4':
