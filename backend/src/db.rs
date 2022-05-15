@@ -6,6 +6,7 @@ use crate::{auth::Role, b64, error::Error::*, passwd::Password, Result};
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use futures::stream::{StreamExt, TryStreamExt};
+use log;
 use mongodb::bson::doc;
 use mongodb::options::{ClientOptions, FindOneOptions, FindOptions, UpdateOptions};
 use mongodb::results::UpdateResult;
@@ -328,7 +329,7 @@ impl DB {
     }
 
     pub async fn get_num_rooms(&self, game_id: &ObjectId) -> Result<u32> {
-        println!("get_num_rooms(); game_id = {}", game_id);
+        log::info!("get_num_rooms(); game_id = {}", game_id);
         match self
             .get_rooms_coll()
             .count_documents(doc! { "game_id": game_id }, None)
@@ -340,7 +341,7 @@ impl DB {
     }
 
     pub async fn get_all_user_scores(&self) -> Result<Vec<UserScoreData>> {
-        println!("get_all_user_scores()");
+        log::info!("get_all_user_scores()");
         let cursor: mongodb::Cursor<UserScoreData> = match self
             .get_database()
             .collection::<UserScoreData>(&self.coll_users)
@@ -373,7 +374,7 @@ impl DB {
     }
 
     pub async fn get_max_score_for_game(&self, game_id: &ObjectId) -> Result<u32> {
-        println!("get_max_score(); game_id = {}", game_id);
+        log::info!("get_max_score(); game_id = {}", game_id);
         let mut cursor: mongodb::Cursor<bson::Document> = match self
             .get_rooms_coll()
             .aggregate(
@@ -434,7 +435,7 @@ impl DB {
     }
 
     pub async fn get_num_riddles(&self, game_id: &ObjectId) -> Result<u32> {
-        println!("get_num_riddles(); game_id = {}", game_id);
+        log::info!("get_num_riddles(); game_id = {}", game_id);
         let mut cursor: mongodb::Cursor<bson::Document> = match self
             .get_rooms_coll()
             .aggregate(
@@ -482,7 +483,7 @@ impl DB {
     }
 
     pub async fn get_riddle_by_level(&self, level: u32) -> Result<Option<Riddle>> {
-        println!("get_riddle_by_level(); level = {}", level);
+        log::info!("get_riddle_by_level(); level = {}", level);
         let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "level": level }, None)
@@ -494,14 +495,14 @@ impl DB {
         match riddle {
             Some(riddle) => Ok(Some(riddle)),
             None => {
-                println!("riddle level {} not found", level);
+                log::info!("riddle level {} not found", level);
                 Ok(Option::default())
             }
         }
     }
 
     pub async fn get_riddle_by_oid(&self, oid: &ObjectId) -> Result<Option<Riddle>> {
-        println!("get_riddle_by_oid(); oid = {}", oid);
+        log::info!("get_riddle_by_oid(); oid = {}", oid);
         let riddle: Option<Riddle> = match self
             .get_riddles_coll()
             .find_one(doc! { "_id": oid }, None)
@@ -512,11 +513,11 @@ impl DB {
         };
         match riddle {
             Some(riddle) => {
-                println!("Found {}", riddle.level);
+                log::info!("Found {}", riddle.level);
                 Ok(Some(riddle))
             }
             None => {
-                println!("riddle not found");
+                log::info!("riddle not found");
                 Ok(Option::default())
             }
         }
@@ -607,9 +608,10 @@ impl DB {
         username: &String,
         email: &String,
     ) -> Result<bool> {
-        println!(
+        log::info!(
             "username_or_email_taken(); username = {}, email = {}",
-            username, email
+            username,
+            email
         );
         #[derive(Debug, Serialize, Deserialize)]
         struct UserId {
@@ -631,7 +633,7 @@ impl DB {
         {
             Ok(user) => user,
             Err(e) => {
-                println!("{:?}", &e);
+                log::error!("{:?}", &e);
                 return Err(MongoQueryError(e));
             }
         };
@@ -642,7 +644,7 @@ impl DB {
     }
 
     pub async fn get_user_role(&self, username: &String) -> Result<Role> {
-        println!("get_user_role(); username = {}", username);
+        log::info!("get_user_role(); username = {}", username);
         #[derive(Debug, Serialize, Deserialize)]
         struct UserRole {
             _id: ObjectId,
@@ -661,7 +663,7 @@ impl DB {
         {
             Ok(user) => user,
             Err(e) => {
-                println!("{:?}", &e);
+                log::error!("{:?}", &e);
                 return Err(MongoQueryError(e));
             }
         };
@@ -672,7 +674,7 @@ impl DB {
     }
 
     pub async fn get_user(&self, username: &String) -> Result<User> {
-        println!("get_user(); username = {}", username);
+        log::info!("get_user(); username = {}", username);
         let user: Option<User> = match self
             .get_users_coll()
             .find_one(doc! { "username": username }, None)
@@ -680,7 +682,7 @@ impl DB {
         {
             Ok(user) => user,
             Err(e) => {
-                println!("{:?}", &e);
+                log::error!("{:?}", &e);
                 return Err(MongoQueryError(e));
             }
         };
@@ -691,7 +693,7 @@ impl DB {
     }
 
     pub async fn get_room(&self, oid: &ObjectId) -> Result<Room> {
-        println!("get_room(); oid = {}", oid);
+        log::info!("get_room(); oid = {}", oid);
         let room: Option<Room> = match self
             .get_rooms_coll()
             .find_one(doc! { "_id": oid }, None)
@@ -711,9 +713,10 @@ impl DB {
         opposite: &String,
         riddle_id: &bson::oid::ObjectId,
     ) -> Result<Room> {
-        println!(
+        log::info!(
             "get_room_behind(); opposite = {}, riddle_id = {}",
-            opposite, riddle_id
+            opposite,
+            riddle_id
         );
         let room: Option<Room> = match self
             .get_rooms_coll()
@@ -740,7 +743,7 @@ impl DB {
     }
 
     pub async fn get_user_with_pin(&self, username: &String, pin: PinType) -> Result<User> {
-        println!("get_user_with_pin(\"{}\", \"{:06}\")", username, pin);
+        log::info!("get_user_with_pin(\"{}\", \"{:06}\")", username, pin);
         let result: Option<User> = match self
             .get_users_coll()
             .find_one(
@@ -754,11 +757,11 @@ impl DB {
         };
         match result {
             Some(user) => {
-                println!("Found {} <{}>", &user.username, &user.email);
+                log::info!("Found {} <{}>", &user.username, &user.email);
                 Ok(user)
             }
             None => {
-                println!("user not found");
+                log::info!("user not found");
                 Err(UserNotFoundError)
             }
         }
@@ -841,9 +844,10 @@ impl DB {
         username: &String,
         rs: &RegistrationState,
     ) -> Result<()> {
-        println!(
+        log::info!(
             "save_webauthn_registration_state(); username = {}, rs = {:?}",
-            username, rs
+            username,
+            rs
         );
         match self
             .get_users_coll()
@@ -868,7 +872,7 @@ impl DB {
         username: &String,
         creds: &Vec<Credential>,
     ) -> Result<()> {
-        println!("save_webauthn_registration(); username = {}", username);
+        log::info!("save_webauthn_registration(); username = {}", username);
         dbg!(&creds);
         match self
             .get_users_coll()
@@ -893,9 +897,10 @@ impl DB {
         username: &String,
         st: &AuthenticationState,
     ) -> Result<()> {
-        println!(
+        log::info!(
             "save_webauthn_authentication_state(); username = {}, as = {:?}",
-            username, st
+            username,
+            st
         );
         match self
             .get_users_coll()
@@ -957,7 +962,7 @@ impl DB {
     }
 
     pub async fn create_user(&mut self, user: &User) -> Result<()> {
-        println!("create_user({:?})", user);
+        log::info!("create_user({:?})", user);
         match self.get_users_coll().insert_one(user, None).await {
             Ok(_) => Ok(()),
             Err(e) => Err(MongoQueryError(e)),
@@ -980,11 +985,11 @@ impl DB {
             .await
         {
             Ok(_) => {
-                println!("Updated {}.", &user.username);
+                log::info!("Updated {}.", &user.username);
                 Ok(())
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", &e);
+                log::error!("Error: update failed ({:?})", &e);
                 Err(MongoQueryError(e))
             }
         }
@@ -1009,11 +1014,11 @@ impl DB {
             .await
         {
             Ok(_) => {
-                println!("Updated {}.", username);
+                log::info!("Updated {}.", username);
                 Ok(())
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", &e);
+                log::error!("Error: update failed ({:?})", &e);
                 Err(MongoQueryError(e))
             }
         }
@@ -1036,7 +1041,7 @@ impl DB {
         };
         let first_room_id: bson::oid::ObjectId = match entrance {
             Some(room) => {
-                println!("Found room {}", &room.id);
+                log::info!("Found room {}", &room.id);
                 room.id
             }
             None => return Err(RoomNotFoundError),
@@ -1095,10 +1100,10 @@ impl DB {
             .await
         {
             Ok(_) => {
-                println!("Updated {}.", &user.username);
+                log::info!("Updated {}.", &user.username);
             }
             Err(e) => {
-                println!("Error: update failed ({:?})", &e);
+                log::error!("Error: update failed ({:?})", &e);
                 return Err(MongoQueryError(e));
             }
         }

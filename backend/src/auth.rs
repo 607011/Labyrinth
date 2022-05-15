@@ -6,6 +6,7 @@ use crate::{error::Error, Result, WebResult};
 use chrono::prelude::*;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use lazy_static::lazy_static;
+use log;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use warp::{
@@ -30,7 +31,7 @@ impl JwtSecretKey {
         jwt
     }
     fn read_key(&mut self, path: &str) {
-        println!("Reading JWT_SECRET_KEY ...");
+        log::info!("Reading JWT_SECRET_KEY ...");
         match std::fs::read(path) {
             Ok(bytes) => {
                 self.token = bytes;
@@ -140,7 +141,7 @@ pub fn create_jwt(uid: &str, role: &Role) -> Result<String> {
 async fn authorize((role, headers): (Role, HeaderMap<HeaderValue>)) -> WebResult<String> {
     match jwt_from_header(&headers) {
         Ok(jwt) => {
-            dbg!(&jwt);
+            log::info!("JWT = {}", &jwt);
             // TODO: check if token has expired
             let decoded = decode::<Claims>(
                 &jwt,

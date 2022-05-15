@@ -1,8 +1,8 @@
 [package]
 name = "labyrinth"
-version = "0.0.16"
+version = "0.0.17"
 edition = "2021"
-authors = ["Oliver Lau <oliver@ersatzworld.net>"]
+authors = ["Oliver Lau <raetselonkel@ersatzworld.net>"]
 description = "Backend (REST API) for an escape room like web-based game"
 keywords = ["gamedev"]
 
@@ -25,17 +25,16 @@ jsonwebtoken = ">= 7.2.0"
 warp = ">=0.3.2"
 chrono = { version = ">=0.4", features = ["serde"]}
 bson = { version = ">=2.1.0", features = ["chrono-0_4", "serde_with", "uuid-0_8"] }
-uuid = ">= 0.8.2"
-futures = ">=0.3.21"
-rand_core = { version = ">= 0.6", features = ["std"] }
-lazy_static = ">= 1.4.0"
-lettre = { version = ">= 0.10.0-BETA.3", features = ["builder"] }
-mongodb-gridfs = ">= 0.2.2"
+uuid = "^1.0"
+futures = "^0.3"
+rand_core = { version = "^0.6", features = ["std"] }
+lazy_static = "^1.4"
+lettre = { version = "0.10.0-rc.6", features = ["builder"] }
 base64 = ">= 0.13.0"
 base32 = ">= 0.4.0"
 dotenv = ">= 0.15.0"
 md5 = ">= 0.7.0"
-rust-argon2 = ">= 1.0"
+rust-argon2 = "^1.0"
 rand = ">= 0.8.5"
 url-escape = ">= 0.1.1"
 regex = ">= 1.5.5"
@@ -43,7 +42,9 @@ qrcode-generator = ">= 4.1.4"
 totp-lite = ">= 1.0.3"
 url = ">= 2.2.2"
 webauthn-rs = ">= 0.3.2"
-rlua = ">= 0.19.1"
+rlua = "^0.19"
+log = "^0.4.17"
+env_logger = "^0.9"
 
 [dependencies.mongodb]
 version = ">= 2.1.0"

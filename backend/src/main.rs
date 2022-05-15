@@ -418,7 +418,7 @@ async fn get_room_by_id(room_id: &ObjectId, db: &DB) -> Result<RoomResponse> {
 }
 
 pub async fn ping_handler() -> WebResult<impl Reply> {
-    println!("ping_handler()");
+    log::info!("ping_handler()");
     let reply: warp::reply::Json = warp::reply::json(&json!(&PingResponse {
         ok: true,
         message: Option::default(),
@@ -428,9 +428,10 @@ pub async fn ping_handler() -> WebResult<impl Reply> {
 }
 
 pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "go_handler(); direction = {}; username = {}",
-        &direction_str, &username
+        &direction_str,
+        &username
     );
     let mut user: User = match db.get_user(&username).await {
         Ok(user) => user,
@@ -471,8 +472,9 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         Ok(room_behind) => room_behind,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!(
-        "moving from {} to {}",
+    log::info!(
+        "moving {} from {} to {}",
+        &username,
         &user.in_room.unwrap(),
         &room_behind.id
     );
@@ -511,10 +513,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         None => return Err(reject::custom(Error::UserIsInNoRoom)),
     };
     let room: Room = match db.get_room(&in_room).await {
-        Ok(room) => {
-            println!("new room {}", room.id);
-            room
-        }
+        Ok(room) => room,
         Err(e) => return Ok(err_response(Some(e.to_string()))),
     };
     let reply: warp::reply::Json = warp::reply::json(&json!(&SteppedThroughResponse {
@@ -542,9 +541,10 @@ pub async fn riddle_solve_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     let solution = url_escape::decode(&body.solution).into_owned();
-    println!(
+    log::info!(
         "riddle_solve_handler(); riddle_id = {}, solution = {}",
-        &riddle_id_str, &solution
+        &riddle_id_str,
+        &solution
     );
     let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
@@ -590,10 +590,10 @@ pub async fn riddle_solve_handler(
         user.score += riddle.difficulty;
         match db.set_user_solved(&solutions, &user).await {
             Ok(()) => {
-                println!("User updated.");
+                log::info!("User {} updated.", &username);
             }
             Err(e) => {
-                println!("Error: update failed: {}", &e);
+                log::error!("Error: update failed: {}", &e);
                 return Err(reject::custom(Error::RiddleNotSolvedError));
             }
         }
@@ -601,10 +601,10 @@ pub async fn riddle_solve_handler(
         user.score -= riddle.deduction.unwrap_or(0);
         match db.rewrite_user_score(&user).await {
             Ok(()) => {
-                println!("User updated.");
+                log::info!("User updated.");
             }
             Err(e) => {
-                println!("Error: update failed: {}", &e);
+                log::error!("Error: update failed: {}", &e);
                 return Err(reject::custom(Error::RiddleNotSolvedError));
             }
         }
@@ -625,9 +625,10 @@ pub async fn debriefing_get_by_riddle_id_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "debriefing_get_by_riddle_id_handler(); riddle_id = {}, username = {}",
-        &riddle_id_str, &username
+        &riddle_id_str,
+        &username
     );
     let oid: bson::oid::ObjectId = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
@@ -641,7 +642,7 @@ pub async fn debriefing_get_by_riddle_id_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    println!("got riddle {}", riddle.level);
+    log::info!("got riddle {}", riddle.level);
     let reply: warp::reply::Json = warp::reply::json(&json!(&DebriefingResponse {
         ok: true,
         message: Option::default(),
@@ -655,7 +656,7 @@ pub async fn riddle_get_oid_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("riddle_get_oid_handler(); riddle_id = {}", &riddle_id_str);
+    log::info!("riddle_get_oid_handler(); riddle_id = {}", &riddle_id_str);
     let oid = match ObjectId::parse_str(riddle_id_str) {
         Ok(oid) => oid,
         Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
@@ -695,7 +696,7 @@ pub async fn riddle_get_oid_handler(
                 match lua_ctx.load(&script).exec() {
                     Ok(()) => (),
                     Err(e) => {
-                        println!("{:?}", e);
+                        log::error!("{:?}", e);
                         return (Option::default(), Option::default());
                     }
                 }
@@ -704,12 +705,12 @@ pub async fn riddle_get_oid_handler(
                     Ok(f) => match f.call::<_, String>(()) {
                         Ok(result) => Some(result),
                         Err(e) => {
-                            println!("{:?}", e);
+                            log::error!("{:?}", e);
                             Option::default()
                         }
                     },
                     Err(e) => {
-                        println!("{:?}", e);
+                        log::error!("{:?}", e);
                         Option::default()
                     }
                 };
@@ -717,12 +718,12 @@ pub async fn riddle_get_oid_handler(
                     Ok(f) => match f.call::<_, String>(()) {
                         Ok(result) => Some(result),
                         Err(e) => {
-                            println!("{:?}", e);
+                            log::error!("{:?}", e);
                             Option::default()
                         }
                     },
                     Err(e) => {
-                        println!("{:?}", e);
+                        log::error!("{:?}", e);
                         Option::default()
                     }
                 };
@@ -754,19 +755,19 @@ pub async fn riddle_get_oid_handler(
         .await
     {
         Ok(_) => {
-            println!("Updated current_riddle_attempt of user '{}'.", &username);
+            log::info!("Updated current_riddle_attempt of user '{}'.", &username);
         }
         Err(e) => {
-            println!("Error: update failed ({:?})", &e);
+            log::error!("Error: update failed ({:?})", &e);
             return Err(reject::custom(Error::MongoQueryError(e)));
         }
     }
 
-    println!("got riddle w/ level = {}", riddle.level);
+    log::info!("got riddle w/ level = {}", riddle.level);
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
         for file in files.iter() {
-            println!("trying to load file {:?}", &file);
+            log::info!("trying to load file {:?}", &file);
             let mut file_variants: Vec<FileVariantResponse> = Vec::new();
             if let Some(variants) = &file.variants {
                 for variant in variants {
@@ -814,9 +815,10 @@ pub async fn game_stats_handler(
     username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "game_stats_handler(); game_id = {}, username = {}",
-        &game_id_str, &username
+        &game_id_str,
+        &username
     );
     let game_id: bson::oid::ObjectId = match ObjectId::parse_str(game_id_str) {
         Ok(oid) => oid,
@@ -852,9 +854,11 @@ pub async fn promote_user_handler(
 ) -> WebResult<impl Reply> {
     let user_to_promote = url_escape::decode(&user_to_promote).into_owned();
     let role = Role::from_str(&url_escape::decode(&role).into_owned());
-    println!(
+    log::info!(
         "promote_user_handler() username = {}, user_to_promote = {}, role = {}",
-        username, user_to_promote, role
+        username,
+        user_to_promote,
+        role
     );
     if user_to_promote == username {
         return Err(reject::custom(Error::UserCannotChangeOwnRoleError));
@@ -892,7 +896,7 @@ pub async fn riddle_get_by_level_handler(
     _username: String,
     db: DB,
 ) -> WebResult<impl Reply> {
-    println!("riddle_get_by_level_handler(); level = {}", level);
+    log::info!("riddle_get_by_level_handler(); level = {}", level);
     let riddle: Option<Riddle> = match db.get_riddle_by_level(level).await {
         Ok(riddle) => riddle,
         Err(e) => return Err(reject::custom(e)),
@@ -901,11 +905,11 @@ pub async fn riddle_get_by_level_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
-    println!("got riddle w/ level = {}", riddle.level);
+    log::info!("got riddle w/ level = {}", riddle.level);
     let mut found_files: Vec<FileResponse> = Vec::new();
     if let Some(files) = riddle.files {
         for file in files.iter() {
-            println!("trying to load file {:?}", &file);
+            log::info!("trying to load file {:?}", &file);
             let mut file_variants: Vec<FileVariantResponse> = Vec::new();
             if let Some(variants) = &file.variants {
                 for variant in variants {
@@ -945,12 +949,12 @@ pub async fn riddle_get_by_level_handler(
 }
 
 pub async fn user_authentication_handler(username: String) -> WebResult<impl Reply> {
-    println!("user_authentication_handler(); username = {}", &username);
+    log::info!("user_authentication_handler(); username = {}", &username);
     Ok(StatusCode::OK)
 }
 
 pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
-    println!("cheat_handler(); username = {}", username);
+    log::info!("cheat_handler(); username = {}", username);
     if true {
         return Err(reject::custom(Error::CheatError));
     }
@@ -958,12 +962,12 @@ pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
 }
 
 pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Reply> {
-    println!("user_whoami_handler() {}", &username);
+    log::info!("user_whoami_handler() {}", &username);
     let user: User = match db.get_user(&username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user {} <{}>", &user.username, &user.email);
+    log::info!("got user {} <{}>", &user.username, &user.email);
     let in_room: ObjectId = match user.in_room {
         Some(room) => room,
         None => return Err(reject::custom(Error::RoomNotFoundError)),
@@ -1003,15 +1007,16 @@ pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Rep
 }
 
 pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "user_totp_login_handler(); username = {}, totp = {}",
-        &body.username, &body.totp
+        &body.username,
+        &body.totp
     );
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user {:?}", &user);
+    log::info!("got user {:?}", &user);
     if !user.awaiting_second_factor {
         return Err(reject::custom(Error::PointlessTotpError));
     }
@@ -1026,10 +1031,10 @@ pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebRe
             .unwrap()
             .as_secs();
         match body.totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
-            true => println!("TOTPs match"),
+            true => log::info!("TOTPs match"),
             false => {
                 if body.totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds - 30) {
-                    println!("TOTPs match (after going back 30 secs)");
+                    log::info!("TOTPs match (after going back 30 secs)");
                 } else {
                     return Err(reject::custom(Error::WrongCredentialsError));
                 }
@@ -1077,12 +1082,12 @@ pub async fn user_totp_login_handler(body: UserTotpRequest, mut db: DB) -> WebRe
 }
 
 pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult<impl Reply> {
-    println!("user_login_handler(); username = {}", &body.username);
+    log::info!("user_login_handler(); username = {}", &body.username);
     let user: User = match db.get_user(&body.username).await {
         Ok(user) => user,
         Err(e) => return Err(reject::custom(e)),
     };
-    println!("got user: {:?}", &user);
+    log::info!("got user: {:?}", &user);
     let matches: bool = match Password::matches(&user.hash, &body.password) {
         Ok(matches) => matches,
         Err(_) => return Err(reject::custom(Error::HashingError)),
@@ -1090,7 +1095,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
     if !matches {
         return Err(reject::custom(Error::WrongCredentialsError));
     }
-    println!("Hashes match.");
+    log::info!("Hashes match.");
     let mut configured_2fa: Vec<SecondFactor> = Vec::new();
     let mut authenticated = true;
     if user.totp_key.len() > 0 {
@@ -1102,7 +1107,7 @@ pub async fn user_login_handler(body: UserLoginRequest, mut db: DB) -> WebResult
                 .as_secs();
             authenticated = match totp == totp_custom::<Sha1>(30, 6, &user.totp_key, seconds) {
                 true => {
-                    println!("TOTPs match");
+                    log::info!("TOTPs match");
                     true
                 }
                 false => return Err(reject::custom(Error::WrongCredentialsError)),
@@ -1192,7 +1197,7 @@ fn generate_otp_qrcode(username: &String, totp_key: &Vec<u8>) -> Result<(String,
 }
 
 pub async fn user_totp_disable_handler(username: String, db: DB) -> WebResult<impl Reply> {
-    println!("user_totp_disable_handler(); username = {}", &username);
+    log::info!("user_totp_disable_handler(); username = {}", &username);
     match db
         .get_users_coll()
         .update_one(
@@ -1207,10 +1212,10 @@ pub async fn user_totp_disable_handler(username: String, db: DB) -> WebResult<im
         .await
     {
         Ok(_) => {
-            println!("Updated {}.", &username);
+            log::info!("Updated {}.", &username);
         }
         Err(e) => {
-            println!("Error: update failed ({:?})", &e);
+            log::info!("Error: update failed ({:?})", &e);
             return Err(reject::custom(Error::MongoQueryError(e)));
         }
     }
@@ -1222,7 +1227,7 @@ pub async fn user_totp_disable_handler(username: String, db: DB) -> WebResult<im
 }
 
 pub async fn user_totp_enable_handler(username: String, db: DB) -> WebResult<impl Reply> {
-    println!("user_totp_enable_handler(); username = {}", &username);
+    log::info!("user_totp_enable_handler(); username = {}", &username);
     let totp_key: Vec<u8> = rand::thread_rng().gen::<[u8; 32]>().to_vec();
     match db
         .get_users_coll()
@@ -1238,10 +1243,10 @@ pub async fn user_totp_enable_handler(username: String, db: DB) -> WebResult<imp
         .await
     {
         Ok(_) => {
-            println!("Updated {}.", &username);
+            log::info!("Updated {}.", &username);
         }
         Err(e) => {
-            println!("Error: update failed ({:?})", &e);
+            log::info!("Error: update failed ({:?})", &e);
             return Err(reject::custom(Error::MongoQueryError(e)));
         }
     }
@@ -1261,9 +1266,10 @@ pub async fn user_activation_handler(
     body: UserActivationRequest,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "user_activation_handler(); username = {}; pin = {}",
-        &body.username, &body.pin
+        &body.username,
+        &body.pin
     );
     let mut user: User = match db.get_user_with_pin(&body.username, body.pin).await {
         Ok(user) => user,
@@ -1327,7 +1333,7 @@ pub async fn user_password_change_handler(
 ) -> WebResult<impl Reply> {
     let password: String = body.password;
     body.password = "******".to_string();
-    println!("user_password_change_handler(); body = {:?}", &body);
+    log::info!("user_password_change_handler(); body = {:?}", &body);
     if password.len() < 8 {
         return Err(reject::custom(Error::PasswordTooShortError));
     }
@@ -1355,7 +1361,7 @@ pub async fn user_registration_handler(
 ) -> WebResult<impl Reply> {
     let password: String = body.password;
     body.password = "******".to_string();
-    println!("user_registration_handler(); body = {:?}", &body);
+    log::info!("user_registration_handler(); body = {:?}", &body);
     if password.len() < 8 {
         return Err(reject::custom(Error::PasswordTooShortError));
     }
@@ -1444,9 +1450,11 @@ Dein Rätselonkel
     let mailer: lettre::SmtpTransport = SmtpTransport::unencrypted_localhost();
     match mailer.send(&email) {
         Ok(_) => {
-            println!(
+            log::info!(
                 "Mail with PIN {:06} successfully sent to {} <{}>.",
-                pin, body.username, body.email
+                pin,
+                body.username,
+                body.email
             );
         }
         Err(_) => return Err(reject::custom(Error::SmtpTransportError)), // TODO: propagate info of `lettre::transport::smtp::Error`
@@ -1462,7 +1470,7 @@ pub async fn webauthn_register_start_handler(
     username: String,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "webauthn_register_start_handler(); username = {}",
         &username
     );
@@ -1486,7 +1494,7 @@ pub async fn webauthn_register_finish_handler(
     body: RegisterPublicKeyCredential,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!("webauthn_register_finish_handler(); body = {:?}", &body);
+    log::info!("webauthn_register_finish_handler(); body = {:?}", &body);
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     match wa_actor.register(&mut db, &username, &body).await {
         Ok(()) => (),
@@ -1500,7 +1508,7 @@ pub async fn webauthn_register_finish_handler(
 }
 
 pub async fn webauthn_login_start_handler(username: String, mut db: DB) -> WebResult<impl Reply> {
-    println!("webauthn_login_start_handler(); username = {}", &username);
+    log::info!("webauthn_login_start_handler(); username = {}", &username);
     let wa_actor = webauthn::WebauthnActor::new(webauthn_default_config());
     let rcr = match wa_actor.challenge_authenticate(&mut db, &username).await {
         Ok(rcr) => rcr,
@@ -1521,9 +1529,10 @@ pub async fn webauthn_login_finish_handler(
     body: PublicKeyCredential,
     mut db: DB,
 ) -> WebResult<impl Reply> {
-    println!(
+    log::info!(
         "webauthn_login_finish_handler(); username = {}, body = {:?}",
-        &username, &body
+        &username,
+        &body
     );
     let user: User = match db.get_user(&username).await {
         Ok(user) => user,
@@ -1582,10 +1591,11 @@ pub async fn webauthn_login_finish_handler(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
     dotenv().ok();
     const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
     const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
-    println!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
+    log::info!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
     let db = DB::init().await?;
     let root = warp::path::end().map(|| "Labyrinth API root.");
     /* Routes accessible to all users */
@@ -1727,7 +1737,7 @@ async fn main() -> Result<()> {
 
     let host = env::var("API_HOST").expect("API_HOST is not in .env file");
     let addr: SocketAddr = host.parse().expect("Cannot parse host address");
-    println!("Listening on http://{}", host);
+    log::info!("Listening on http://{}", host);
     warp::serve(routes).run(addr).await;
     Ok(())
 }
