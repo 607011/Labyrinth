@@ -253,7 +253,7 @@ pub struct UserWhoamiResponse {
     #[serde(with = "ts_seconds_option")]
     pub last_login: Option<DateTime<Utc>>,
     pub level: u32,
-    pub score: u32,
+    pub score: i32,
     pub in_room: RoomResponse,
     pub solved: Vec<RiddleAttempt>,
     pub rooms_entered: Vec<ObjectId>,
@@ -296,8 +296,8 @@ pub struct RiddleResponse {
     pub level: u32,
     pub files: Option<Vec<FileResponse>>,
     pub task: Option<String>,
-    pub difficulty: u32,
-    pub deduction: u32,
+    pub difficulty: i32,
+    pub deduction: i32,
     pub ignore_case: bool,
     pub credits: Option<String>,
 }
@@ -314,7 +314,7 @@ pub struct RiddleSolvedResponse {
     pub ok: bool,
     pub riddle_id: ObjectId,
     pub solved: bool,
-    pub score: u32,
+    pub score: i32,
     pub level: u32,
     pub message: Option<String>,
 }
@@ -597,7 +597,8 @@ pub async fn riddle_solve_handler(
             }
         }
     } else {
-        user.score -= riddle.deduction.unwrap_or(0);
+        let deduction = riddle.deduction.unwrap_or(0);
+        user.score = 0.max(user.score - deduction);
         match db.rewrite_user_score(&user).await {
             Ok(()) => {
                 log::info!("User updated.");

@@ -51,9 +51,9 @@ pub struct Riddle {
     #[serde(rename = "_id")]
     pub id: ObjectId,
     #[serde(default)]
-    pub difficulty: u32,
+    pub difficulty: i32,
     #[serde(default)]
-    pub deduction: Option<u32>,
+    pub deduction: Option<i32>,
     #[serde(default)]
     pub level: u32,
     #[serde(default)]
@@ -195,7 +195,7 @@ pub struct User {
     #[serde(default)]
     pub level: u32,
     #[serde(default)]
-    pub score: u32,
+    pub score: i32,
     pub in_room: Option<ObjectId>,
     #[serde(default)]
     pub awaiting_second_factor: bool,

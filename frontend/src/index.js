@@ -494,7 +494,7 @@ terminal-div {
                     }
                     else {
                         this.print(tr('Leider falsch.'));
-                        if (riddle.deduction > 0) {
+                        if (riddle.deduction > 0 && riddle.deduction < this.user.score) {
                             this.print(tr(`Dir ${riddle.deduction === 1 ? 'wird ein Punkt' : `werden ${riddle.deduction} Punkte`} abgezogen.`));
                         }
                         this.print(tr('Versuchs noch einmal!'));
