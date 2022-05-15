@@ -29,7 +29,7 @@ const makeDownloadLink = (file) => {
     let span = document.createElement('div');
     span.textContent = '-> ';
     let a = document.createElement('a');
-    a.download = file.name;
+    a.download = file.originalName;
     a.title = `Download image as ${file.originalName}`;
     a.href = `${UPLOAD_FOLDER}/${file.uploadedName}`;
     a.textContent = `Download ${file.originalName}`;
