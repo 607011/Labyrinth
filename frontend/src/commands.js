@@ -117,7 +117,6 @@ const COMMANDS = [
                                 this.print(`<audio controls><source src="${dataUrl}" type="${f.mimeType}"></audio>`);
                                 break;
                             case 'text/markdown':
-                                this.print(parseMarkdown(atob(f.data)));
                                 this.term.container.appendChild(makeDownloadLink(f));
                                 break;
                             case 'text/plain':

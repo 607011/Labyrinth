@@ -418,7 +418,7 @@ terminal-div {
                             this.term.container.appendChild(makeDownloadLink(f));
                             break;
                         case 'text/markdown':
-                            this.print(parseMarkdown(Base64.decode(f.data)));
+                            this.print('Schau in die Markdown-Datei!');
                             this.term.container.appendChild(makeDownloadLink(f));
                             break;
                         case 'text/html':
