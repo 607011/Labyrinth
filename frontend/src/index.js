@@ -283,13 +283,15 @@ terminal-div {
     set user(user) {
         this._user = user;
         this.term.prompt = this.prompt;
-        this.term.commands = Game.COMMANDS.filter(cmd => cmd.roles.includes(user.role)).map(cmd => cmd.name);
+        let role = ROLE.ANON;
         if (this.user === null) {
             this.login_state_el.textContent = tr(`nicht angemeldet`);
         }
         else {
+            role = user.role;
             this.login_state_el.innerHTML = tr(`angemeldet als <i>${this.user.username}</i> (Punkte: <span id="score">${this.user.score}</span>, Level: <span id="level">${this.user.level}</span>)`);
         }
+        this.term.commands = Game.COMMANDS.filter(cmd => cmd.roles.includes(role)).map(cmd => cmd.name);
     }
     displayPrompt() {
         this.hideProgressbar();
