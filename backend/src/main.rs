@@ -9,11 +9,10 @@ use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
 use db::{with_db, Direction, PinType, Riddle, RiddleAttempt, Room, SecondFactor, User, DB};
 use dotenv::dotenv;
-use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
+use log;
 use mongodb::bson::doc;
-use mongodb_gridfs::{options::GridFSBucketOptions, GridFSBucket};
 use passwd::Password;
 use qrcode_generator::QrCodeEcc;
 use rand::Rng;
@@ -680,17 +679,6 @@ pub async fn riddle_get_oid_handler(
     };
     let (scripted_task, scripted_solution): (Option<String>, Option<String>) = match riddle.script {
         Some(ref script) => {
-            println!("trying to load script file {:?}", &script.name);
-            let bucket: mongodb_gridfs::GridFSBucket =
-                GridFSBucket::new(db.get_database(), Some(GridFSBucketOptions::default()));
-            let mut cursor = match bucket.open_download_stream(script.file_id).await {
-                Ok(cursor) => cursor,
-                Err(e) => return Err(reject::custom(Error::GridFSError(e))),
-            };
-            let mut script: Vec<u8> = Vec::new();
-            while let Some(mut chunk) = cursor.next().await {
-                script.append(&mut chunk);
-            }
             let lua = rlua::Lua::new();
             let (task, solution) = lua.context(|lua_ctx| {
                 match lua_ctx.load(&script).exec() {

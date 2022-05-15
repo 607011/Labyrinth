@@ -32,15 +32,6 @@ pub struct UploadedFileVariant {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct UploadedScript {
-    #[serde(rename = "fileId")]
-    pub file_id: ObjectId,
-    pub name: String,
-    #[serde(rename = "mimeType")]
-    pub mime_type: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
 pub struct UploadedFile {
     #[serde(rename = "originalName")]
     pub original_name: String,
@@ -77,7 +68,7 @@ pub struct Riddle {
     #[serde(default)]
     pub credits: Option<String>,
     #[serde(default)]
-    pub script: Option<UploadedScript>,
+    pub script: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

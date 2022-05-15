@@ -2,6 +2,7 @@
  * Copyright (c) 2022 Oliver Lau <oliver@ersatzworld.net>
  * All rights reserved.
  */
+use log;
 use serde::Serialize;
 use std::convert::Infallible;
 use thiserror::Error;
@@ -17,8 +18,6 @@ pub enum Error {
     MongoDataError(#[from] bson::document::ValueAccessError),
     #[error("could not parse ObjectID {0}")]
     BsonOidError(#[from] bson::oid::Error),
-    #[error("could not load file {0}")]
-    GridFSError(#[from] mongodb_gridfs::GridFSError),
     #[error("invalid id used: {0}")]
     InvalidIDError(String),
     #[error("data base query error: {0}")]
@@ -140,7 +139,7 @@ pub async fn handle_rejection(err: Rejection) -> std::result::Result<impl Reply,
             "Method Not Allowed".to_string(),
         )
     } else {
-        println!("unhandled error: {:?}", err);
+        log::error!("unhandled error: {:?}", err);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal Server Error".to_string(),
