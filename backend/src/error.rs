@@ -22,6 +22,8 @@ pub enum Error {
     InvalidIDError(String),
     #[error("data base query error: {0}")]
     DatabaseQueryError(String),
+    #[error("script environment error")]
+    ScriptEnvironmentError,
     #[error("hashing error")]
     HashingError,
     #[error("password must be at least 8 characters long")]

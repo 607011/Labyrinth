@@ -423,7 +423,9 @@ terminal-div {
                             break;
                         case 'text/html':
                             const embed = document.createElement('embed');
-                            embed.src = `${UPLOAD_FOLDER}/${f.uploadedName}`;
+                            embed.src = f.data
+                                ? `data:text/html;base64,${f.data}`
+                                : `${UPLOAD_FOLDER}/${f.uploadedName}`;
                             embed.type = f.mimeType;
                             embed.style.width = "512px";
                             embed.style.height = "512px";

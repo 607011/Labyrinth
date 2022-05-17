@@ -19,6 +19,7 @@ use rand::Rng;
 use rand_core::{OsRng, RngCore};
 use regex::Regex;
 use rlua;
+use scripting::{with_script_env, ScriptEnv, ScriptEnvMap};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -27,6 +28,7 @@ use std::env;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use totp_lite::{totp_custom, Sha1};
 use url_escape;
@@ -41,6 +43,7 @@ mod b64;
 mod db;
 mod error;
 mod passwd;
+mod scripting;
 mod webauthn;
 
 type Result<T> = std::result::Result<T, error::Error>;
@@ -263,7 +266,7 @@ pub struct UserWhoamiResponse {
     pub configured_2fa: Vec<SecondFactor>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct FileVariantResponse {
     #[serde(rename = "originalName")]
     pub original_name: String,
@@ -272,16 +275,19 @@ pub struct FileVariantResponse {
     pub scale: Option<u32>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct FileResponse {
     pub ok: bool,
     pub message: Option<String>,
     #[serde(rename = "originalName")]
-    pub original_name: String,
+    pub original_name: Option<String>,
     #[serde(rename = "uploadedName")]
-    pub uploaded_name: String,
+    pub uploaded_name: Option<String>,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
+    #[serde(default)]
+    #[serde(with = "b64")]
+    pub data: Vec<u8>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub scale: Option<u32>,
@@ -388,6 +394,105 @@ struct PromoteUserResponse {
     pub message: Option<String>,
     pub username: String,
     pub role: Role,
+}
+
+#[derive(Debug)]
+pub struct ScriptResult {
+    pub solution: Option<String>,
+    pub task: Option<String>,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+}
+
+pub fn evaluate_script(
+    username: &String,
+    script: &String,
+    env: Arc<Mutex<ScriptEnvMap>>,
+    load: bool,
+) -> ScriptResult {
+    let mut env = env.lock().unwrap();
+    if !env.contains_key(username) {
+        env.insert(username.clone(), ScriptEnv::new());
+        log::info!("inserted {} into script_env", username);
+    }
+    let env = env.get(username).unwrap();
+    log::info!("fetched {} from script_env", username);
+    let (solution, task, name, mime_type) = env.lua.context(|lua_ctx| {
+        if load {
+            match lua_ctx.load(&script).exec() {
+                Ok(()) => (),
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    return (
+                        Option::default(),
+                        Option::default(),
+                        Option::default(),
+                        Option::default(),
+                    );
+                }
+            }
+        }
+        let globals = lua_ctx.globals();
+        let task: Option<String> = match globals.get::<_, rlua::Function>("task") {
+            Ok(f) => match f.call::<_, String>(()) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    Option::default()
+                }
+            },
+            Err(e) => {
+                log::error!("{:?}", e);
+                Option::default()
+            }
+        };
+        let mime_type: Option<String> = match globals.get::<_, rlua::Function>("mime_type") {
+            Ok(f) => match f.call::<_, String>(()) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    Option::default()
+                }
+            },
+            Err(e) => {
+                log::error!("{:?}", e);
+                Option::default()
+            }
+        };
+        let name: Option<String> = match globals.get::<_, rlua::Function>("name") {
+            Ok(f) => match f.call::<_, String>(()) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    Option::default()
+                }
+            },
+            Err(e) => {
+                log::error!("{:?}", e);
+                Option::default()
+            }
+        };
+        let solution: Option<String> = match globals.get::<_, rlua::Function>("solution") {
+            Ok(f) => match f.call::<_, String>(()) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    Option::default()
+                }
+            },
+            Err(e) => {
+                log::error!("{:?}", e);
+                Option::default()
+            }
+        };
+        (solution, task, name, mime_type)
+    });
+    ScriptResult {
+        solution,
+        task,
+        name,
+        mime_type,
+    }
 }
 
 fn err_response(message: Option<String>) -> WithStatus<warp::reply::Json> {
@@ -538,6 +643,7 @@ pub async fn riddle_solve_handler(
     body: RiddleSolveRequest,
     username: String,
     mut db: DB,
+    script_env: Arc<Mutex<ScriptEnvMap>>,
 ) -> WebResult<impl Reply> {
     let solution = url_escape::decode(&body.solution).into_owned();
     log::info!(
@@ -562,9 +668,19 @@ pub async fn riddle_solve_handler(
         Some(riddle) => riddle,
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
+    let script_env_present = script_env.lock().unwrap().contains_key(&username);
+    let calculated_solution = match script_env_present && riddle.script.is_some() {
+        true => {
+            let result: ScriptResult =
+                evaluate_script(&username, &riddle.script.unwrap(), script_env, false);
+            dbg!("{:?}", &result);
+            result.solution
+        }
+        false => Some(riddle.solution.clone()),
+    };
     let solved: bool = match riddle.ignore_case.unwrap_or(false) {
-        true => riddle.solution.to_lowercase() == solution.to_lowercase(),
-        false => riddle.solution == solution,
+        true => calculated_solution.unwrap_or_default().to_lowercase() == solution.to_lowercase(),
+        false => calculated_solution.unwrap_or_default() == solution,
     };
     let mut user: User = match user {
         Some(user) => user,
@@ -583,7 +699,6 @@ pub async fn riddle_solve_handler(
             riddle_id: riddle.id,
             t0: riddle_attempt.t0,
             t_solved: Some(Utc::now()),
-            scripted_solution: Option::default(),
         });
         user.level = riddle.level.max(user.level);
         user.score += riddle.difficulty;
@@ -620,6 +735,275 @@ pub async fn riddle_solve_handler(
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
 
+pub async fn riddle_get_oid_handler(
+    riddle_id_str: String,
+    username: String,
+    db: DB,
+    script_env: Arc<Mutex<ScriptEnvMap>>,
+) -> WebResult<impl Reply> {
+    log::info!("riddle_get_oid_handler(); riddle_id = {}", &riddle_id_str);
+    let oid = match ObjectId::parse_str(riddle_id_str) {
+        Ok(oid) => oid,
+        Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
+    };
+    let (riddle_id, user, message) = db.riddle_accessibility(&oid, &username).await;
+    let riddle_id: bson::oid::ObjectId = match riddle_id {
+        Some(riddle_id) => riddle_id,
+        None => return Ok(err_response(message)),
+    };
+    let riddle: Option<Riddle> = match db.get_riddle_by_oid(&riddle_id).await {
+        Ok(riddle) => riddle,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let riddle: Riddle = match riddle {
+        Some(riddle) => riddle,
+        None => return Err(reject::custom(Error::RiddleNotFoundError)),
+    };
+    let mut user = match user {
+        Some(user) => user,
+        None => return Err(reject::custom(Error::UserNotAssociatedWithRiddle)),
+    };
+    let mut found_files: Vec<FileResponse> = Vec::new();
+    let scripted_solution: Option<String> = match riddle.script {
+        Some(ref script) => {
+            let result: ScriptResult = evaluate_script(&username, script, script_env, true);
+            found_files.push(FileResponse {
+                ok: true,
+                message: Option::default(),
+                original_name: result.name,
+                uploaded_name: Option::default(),
+                mime_type: result.mime_type.unwrap_or_default(),
+                data: result.task.unwrap_or_default().as_bytes().to_vec(),
+                scale: Option::default(),
+                width: Option::default(),
+                height: Option::default(),
+                variants: Option::default(),
+            });
+            result.solution
+        }
+        None => Option::default(),
+    };
+    let riddle_attempt = RiddleAttempt {
+        riddle_id,
+        t0: Some(Utc::now()),
+        t_solved: Option::default(),
+    };
+    user.current_riddle_attempt = Some(riddle_attempt);
+    // log::debug!("{:?}", &user.current_riddle_attempt);
+    match db
+        .get_users_coll()
+        .update_one(
+            doc! { "username": username.clone() },
+            doc! {
+                "$set": {
+                    "current_riddle_attempt": Some(bson::to_bson(&user.current_riddle_attempt).unwrap()),
+                },
+            },
+            None,
+        )
+        .await
+    {
+        Ok(_) => {
+            log::info!("Updated current_riddle_attempt of user '{}'.", &username);
+        }
+        Err(e) => {
+            log::error!("Error: update failed ({:?})", &e);
+            return Err(reject::custom(Error::MongoQueryError(e)));
+        }
+    }
+
+    log::info!("got riddle w/ level = {}", riddle.level);
+    if let Some(files) = riddle.files {
+        for file in files.iter() {
+            log::info!("trying to load file {:?}", &file);
+            let mut file_variants: Vec<FileVariantResponse> = Vec::new();
+            if let Some(variants) = &file.variants {
+                for variant in variants {
+                    file_variants.push(FileVariantResponse {
+                        original_name: variant.original_name.clone(),
+                        uploaded_name: variant.uploaded_name.clone(),
+                        scale: Some(variant.scale),
+                    });
+                }
+            }
+            found_files.push(FileResponse {
+                ok: true,
+                message: Option::default(),
+                original_name: Some(file.original_name.clone()),
+                uploaded_name: Some(file.uploaded_name.clone()),
+                mime_type: file.mime_type.clone(),
+                data: Vec::new(),
+                scale: file.scale,
+                width: file.width,
+                height: file.height,
+                variants: Some(file_variants),
+            })
+        }
+    }
+    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
+        ok: true,
+        message: Option::default(),
+        id: riddle.id,
+        level: riddle.level,
+        difficulty: riddle.difficulty,
+        deduction: riddle.deduction.unwrap_or(0),
+        ignore_case: riddle.ignore_case.unwrap_or(false),
+        files: Option::from(found_files),
+        task: riddle.task,
+        credits: riddle.credits,
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
+// This function is needed for manual debugging.
+pub async fn riddle_get_by_level_handler(
+    level: u32,
+    username: String,
+    db: DB,
+    script_env: Arc<Mutex<ScriptEnvMap>>,
+) -> WebResult<impl Reply> {
+    log::info!("riddle_get_by_level_handler(); level = {}", level);
+    let riddle: Option<Riddle> = match db.get_riddle_by_level(level).await {
+        Ok(riddle) => riddle,
+        Err(e) => return Err(reject::custom(e)),
+    };
+    let riddle: Riddle = match riddle {
+        Some(riddle) => riddle,
+        None => return Err(reject::custom(Error::RiddleNotFoundError)),
+    };
+    log::info!("got riddle w/ level = {}", riddle.level);
+    let mut found_files: Vec<FileResponse> = Vec::new();
+    if let Some(files) = riddle.files {
+        for file in files.iter() {
+            log::info!("trying to load file {:?}", &file);
+            let mut file_variants: Vec<FileVariantResponse> = Vec::new();
+            if let Some(variants) = &file.variants {
+                for variant in variants {
+                    file_variants.push(FileVariantResponse {
+                        original_name: variant.original_name.clone(),
+                        uploaded_name: variant.uploaded_name.clone(),
+                        scale: Some(variant.scale),
+                    });
+                }
+            }
+            found_files.push(FileResponse {
+                ok: true,
+                message: Option::default(),
+                original_name: Some(file.original_name.clone()),
+                uploaded_name: Some(file.uploaded_name.clone()),
+                mime_type: file.mime_type.clone(),
+                data: Vec::new(),
+                scale: file.scale,
+                width: file.width,
+                height: file.height,
+                variants: Some(file_variants),
+            })
+        }
+    }
+    let _scripted_solution: Option<String> = match riddle.script {
+        Some(ref script) => {
+            let mut env = script_env.lock().unwrap();
+            if !env.contains_key(&username) {
+                env.insert(username.clone(), ScriptEnv::new());
+                log::debug!("inserted {} into script_env", &username);
+            }
+            let env = env.get(&username).unwrap();
+            log::debug!("fetched {} from script_env", &username);
+            let solution: Option<String> = env.lua.context(|lua_ctx| {
+                match lua_ctx.load(&script).exec() {
+                    Ok(()) => (),
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        return Option::default();
+                    }
+                }
+                let globals = lua_ctx.globals();
+                let task: Option<String> = match globals.get::<_, rlua::Function>("task") {
+                    Ok(f) => match f.call::<_, String>(()) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                            Option::default()
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        Option::default()
+                    }
+                };
+                let mime_type: Option<String> = match globals.get::<_, rlua::Function>("mime_type")
+                {
+                    Ok(f) => match f.call::<_, String>(()) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                            Option::default()
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        Option::default()
+                    }
+                };
+                let script_name: Option<String> = match globals.get::<_, rlua::Function>("name") {
+                    Ok(f) => match f.call::<_, String>(()) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                            Option::default()
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        Option::default()
+                    }
+                };
+                found_files.push(FileResponse {
+                    ok: true,
+                    message: Option::default(),
+                    original_name: script_name,
+                    uploaded_name: Option::default(),
+                    mime_type: mime_type.unwrap_or_default(),
+                    data: task.clone().unwrap_or_default().as_bytes().to_vec(),
+                    width: Option::default(),
+                    height: Option::default(),
+                    scale: Option::default(),
+                    variants: Option::default(),
+                });
+                let solution: Option<String> = match globals.get::<_, rlua::Function>("solution") {
+                    Ok(f) => match f.call::<_, String>(()) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                            Option::default()
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        Option::default()
+                    }
+                };
+                solution
+            });
+            solution
+        }
+        None => Option::default(),
+    };
+    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
+        ok: true,
+        message: Option::default(),
+        id: riddle.id,
+        level: riddle.level,
+        difficulty: riddle.difficulty,
+        deduction: riddle.deduction.unwrap_or(0),
+        ignore_case: riddle.ignore_case.unwrap_or(false),
+        files: Option::from(found_files),
+        task: riddle.task,
+        credits: riddle.credits,
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
 pub async fn debriefing_get_by_riddle_id_handler(
     riddle_id_str: String,
     username: String,
@@ -647,154 +1031,6 @@ pub async fn debriefing_get_by_riddle_id_handler(
         ok: true,
         message: Option::default(),
         debriefing: riddle.debriefing,
-    }));
-    Ok(warp::reply::with_status(reply, StatusCode::OK))
-}
-
-pub async fn riddle_get_oid_handler(
-    riddle_id_str: String,
-    username: String,
-    db: DB,
-) -> WebResult<impl Reply> {
-    log::info!("riddle_get_oid_handler(); riddle_id = {}", &riddle_id_str);
-    let oid = match ObjectId::parse_str(riddle_id_str) {
-        Ok(oid) => oid,
-        Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
-    };
-    let (riddle_id, user, message) = db.riddle_accessibility(&oid, &username).await;
-    let riddle_id: bson::oid::ObjectId = match riddle_id {
-        Some(riddle_id) => riddle_id,
-        None => return Ok(err_response(message)),
-    };
-    let riddle: Option<Riddle> = match db.get_riddle_by_oid(&riddle_id).await {
-        Ok(riddle) => riddle,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    let riddle: Riddle = match riddle {
-        Some(riddle) => riddle,
-        None => return Err(reject::custom(Error::RiddleNotFoundError)),
-    };
-    let mut user = match user {
-        Some(user) => user,
-        None => return Err(reject::custom(Error::UserNotAssociatedWithRiddle)),
-    };
-    let (scripted_task, scripted_solution): (Option<String>, Option<String>) = match riddle.script {
-        Some(ref script) => {
-            let lua = rlua::Lua::new();
-            let (task, solution) = lua.context(|lua_ctx| {
-                match lua_ctx.load(&script).exec() {
-                    Ok(()) => (),
-                    Err(e) => {
-                        log::error!("{:?}", e);
-                        return (Option::default(), Option::default());
-                    }
-                }
-                let globals = lua_ctx.globals();
-                let task: Option<String> = match globals.get::<_, rlua::Function>("task") {
-                    Ok(f) => match f.call::<_, String>(()) {
-                        Ok(result) => Some(result),
-                        Err(e) => {
-                            log::error!("{:?}", e);
-                            Option::default()
-                        }
-                    },
-                    Err(e) => {
-                        log::error!("{:?}", e);
-                        Option::default()
-                    }
-                };
-                let solution: Option<String> = match globals.get::<_, rlua::Function>("solution") {
-                    Ok(f) => match f.call::<_, String>(()) {
-                        Ok(result) => Some(result),
-                        Err(e) => {
-                            log::error!("{:?}", e);
-                            Option::default()
-                        }
-                    },
-                    Err(e) => {
-                        log::error!("{:?}", e);
-                        Option::default()
-                    }
-                };
-                (task, solution)
-            });
-            (task, solution)
-        }
-        None => (Option::default(), Option::default()),
-    };
-    let riddle_attempt = RiddleAttempt {
-        riddle_id,
-        t0: Some(Utc::now()),
-        t_solved: Option::default(),
-        scripted_solution,
-    };
-    user.current_riddle_attempt = Some(riddle_attempt);
-    dbg!(&user.current_riddle_attempt);
-    match db
-        .get_users_coll()
-        .update_one(
-            doc! { "username": username.clone() },
-            doc! {
-                "$set": {
-                    "current_riddle_attempt": Some(bson::to_bson(&user.current_riddle_attempt).unwrap()),
-                },
-            },
-            None,
-        )
-        .await
-    {
-        Ok(_) => {
-            log::info!("Updated current_riddle_attempt of user '{}'.", &username);
-        }
-        Err(e) => {
-            log::error!("Error: update failed ({:?})", &e);
-            return Err(reject::custom(Error::MongoQueryError(e)));
-        }
-    }
-
-    log::info!("got riddle w/ level = {}", riddle.level);
-    let mut found_files: Vec<FileResponse> = Vec::new();
-    if let Some(files) = riddle.files {
-        for file in files.iter() {
-            log::info!("trying to load file {:?}", &file);
-            let mut file_variants: Vec<FileVariantResponse> = Vec::new();
-            if let Some(variants) = &file.variants {
-                for variant in variants {
-                    file_variants.push(FileVariantResponse {
-                        original_name: variant.original_name.clone(),
-                        uploaded_name: variant.uploaded_name.clone(),
-                        scale: Some(variant.scale),
-                    });
-                }
-            }
-            found_files.push(FileResponse {
-                ok: true,
-                message: Option::default(),
-                original_name: file.original_name.clone(),
-                uploaded_name: file.uploaded_name.clone(),
-                mime_type: file.mime_type.clone(),
-                scale: file.scale,
-                width: file.width,
-                height: file.height,
-                variants: Some(file_variants),
-            })
-        }
-    }
-    let task: Option<String> = match scripted_task {
-        Some(task) => Some(task),
-        None => riddle.task,
-    };
-    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
-        ok: true,
-        message: Option::default(),
-        id: riddle.id,
-        level: riddle.level,
-        difficulty: riddle.difficulty,
-        deduction: riddle.deduction.unwrap_or(0),
-        ignore_case: riddle.ignore_case.unwrap_or(false),
-        files: Option::from(found_files),
-        task,
-        credits: riddle.credits,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -875,64 +1111,6 @@ pub async fn promote_user_handler(
         message: Option::default(),
         username: user_to_promote,
         role,
-    }));
-    Ok(warp::reply::with_status(reply, StatusCode::OK))
-}
-
-// This function is needed for manual debugging.
-pub async fn riddle_get_by_level_handler(
-    level: u32,
-    _username: String,
-    db: DB,
-) -> WebResult<impl Reply> {
-    log::info!("riddle_get_by_level_handler(); level = {}", level);
-    let riddle: Option<Riddle> = match db.get_riddle_by_level(level).await {
-        Ok(riddle) => riddle,
-        Err(e) => return Err(reject::custom(e)),
-    };
-    let riddle: Riddle = match riddle {
-        Some(riddle) => riddle,
-        None => return Err(reject::custom(Error::RiddleNotFoundError)),
-    };
-    log::info!("got riddle w/ level = {}", riddle.level);
-    let mut found_files: Vec<FileResponse> = Vec::new();
-    if let Some(files) = riddle.files {
-        for file in files.iter() {
-            log::info!("trying to load file {:?}", &file);
-            let mut file_variants: Vec<FileVariantResponse> = Vec::new();
-            if let Some(variants) = &file.variants {
-                for variant in variants {
-                    file_variants.push(FileVariantResponse {
-                        original_name: variant.original_name.clone(),
-                        uploaded_name: variant.uploaded_name.clone(),
-                        scale: Some(variant.scale),
-                    });
-                }
-            }
-            found_files.push(FileResponse {
-                ok: true,
-                message: Option::default(),
-                original_name: file.original_name.clone(),
-                uploaded_name: file.uploaded_name.clone(),
-                mime_type: file.mime_type.clone(),
-                scale: file.scale,
-                width: file.width,
-                height: file.height,
-                variants: Some(file_variants),
-            })
-        }
-    }
-    let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleResponse {
-        ok: true,
-        message: Option::default(),
-        id: riddle.id,
-        level: riddle.level,
-        difficulty: riddle.difficulty,
-        deduction: riddle.deduction.unwrap_or(0),
-        ignore_case: riddle.ignore_case.unwrap_or(false),
-        files: Option::from(found_files),
-        task: riddle.task,
-        credits: riddle.credits,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -1586,6 +1764,7 @@ async fn main() -> Result<()> {
     const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
     log::info!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
     let db = DB::init().await?;
+    let script_env = Arc::new(Mutex::new(ScriptEnvMap::new()));
     let root = warp::path::end().map(|| "Labyrinth API root.");
     /* Routes accessible to all users */
     let ping_route = warp::path!("ping").and(warp::get()).and_then(ping_handler);
@@ -1660,6 +1839,7 @@ async fn main() -> Result<()> {
         .and(warp::get())
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
+        .and(with_script_env(script_env.clone()))
         .and_then(riddle_get_oid_handler);
     let debriefing_get_by_riddle_id_route = warp::path!("riddle" / "debriefing" / OidString)
         .and(warp::get())
@@ -1671,6 +1851,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json())
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
+        .and(with_script_env(script_env.clone()))
         .and_then(riddle_solve_handler);
     let go_route = warp::path!("go" / String)
         .and(warp::get())
@@ -1691,6 +1872,7 @@ async fn main() -> Result<()> {
         .and(warp::get())
         .and(with_auth(Role::Admin))
         .and(with_db(db.clone()))
+        .and(with_script_env(script_env.clone()))
         .and_then(riddle_get_by_level_handler);
     let promote_user_route = warp::path!("admin" / "promote" / String / String)
         .and(warp::get())

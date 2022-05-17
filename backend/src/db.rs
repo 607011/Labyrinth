@@ -69,6 +69,8 @@ pub struct Riddle {
     pub credits: Option<String>,
     #[serde(default)]
     pub script: Option<String>,
+    #[serde(default)]
+    pub external_password_input: bool,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -164,8 +166,6 @@ pub struct RiddleAttempt {
     #[serde(default)]
     #[serde(with = "ts_seconds_option")]
     pub t_solved: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub scripted_solution: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -504,7 +504,7 @@ impl DB {
         };
         match riddle {
             Some(riddle) => {
-                log::info!("Found {}", riddle.level);
+                log::info!("Found riddle {} with level {}", oid, riddle.level);
                 Ok(Some(riddle))
             }
             None => {
