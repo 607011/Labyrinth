@@ -64,7 +64,7 @@ class Base64 {
     }
     static decode(encoded) {
         const bytes = Base64.toArray(encoded);
-        return String.fromCharCode(...new Uint16Array(bytes.buffer));
+        return String.fromCharCode(...new Uint8Array(bytes.buffer));
     }
     static toArray(encoded) {
         const binary = atob(encoded);
