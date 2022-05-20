@@ -413,9 +413,12 @@ terminal-div {
                             this.print(`<audio autoplay controls><source src="${audioUrl}" type="${f.mimeType}"></audio>`);
                             break;
                         case 'text/plain':
+                            this.print(Base64.decode(f.data));
                             // fall-through
                         case 'text/yaml':
-                            this.term.container.appendChild(makeDownloadLink(f));
+                            if (f.originalName) {
+                                this.term.container.appendChild(makeDownloadLink(f));
+                            }
                             break;
                         case 'text/markdown':
                             this.print('Schau in die Markdown-Datei!');
@@ -430,7 +433,7 @@ terminal-div {
                             embed.style.width = "512px";
                             embed.style.height = "512px";
                             this.term.container.appendChild(embed);
-                            this.term.container.appendChild(makeDownloadLink(f));
+                            // this.term.container.appendChild(makeDownloadLink(f));
                             break;
                         case 'application/json':
                             // fall-through
@@ -496,6 +499,9 @@ terminal-div {
                     }
                     else {
                         this.print(tr('Leider falsch.'));
+                        if (reply.feedback) {
+                            this.print(reply.feedback);
+                        }
                         if (riddle.deduction > 0 && riddle.deduction < this.user.score) {
                             this.print(tr(`Dir ${riddle.deduction === 1 ? 'wird ein Punkt' : `werden ${riddle.deduction} Punkte`} abgezogen.`));
                         }
