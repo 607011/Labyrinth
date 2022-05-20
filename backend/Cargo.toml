@@ -1,6 +1,6 @@
 [package]
 name = "labyrinth"
-version = "0.0.17"
+version = "0.0.18"
 edition = "2021"
 authors = ["Oliver Lau <raetselonkel@ersatzworld.net>"]
 description = "Backend (REST API) for an escape room like web-based game"
