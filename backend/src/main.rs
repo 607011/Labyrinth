@@ -323,6 +323,7 @@ pub struct RiddleSolvedResponse {
     pub score: i32,
     pub level: u32,
     pub message: Option<String>,
+    pub feedback: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -400,6 +401,7 @@ struct PromoteUserResponse {
 pub struct ScriptResult {
     pub solution: Option<String>,
     pub task: Option<String>,
+    pub feedback: Option<String>,
     pub name: Option<String>,
     pub mime_type: Option<String>,
 }
@@ -407,9 +409,11 @@ pub struct ScriptResult {
 pub fn evaluate_script(
     username: &String,
     script: &String,
+    guess: Option<String>,
     env: Arc<Mutex<ScriptEnvMap>>,
     load: bool,
 ) -> ScriptResult {
+    dbg!(&guess);
     let mut env = env.lock().unwrap();
     if !env.contains_key(username) {
         env.insert(username.clone(), ScriptEnv::new());
@@ -417,13 +421,14 @@ pub fn evaluate_script(
     }
     let env = env.get(username).unwrap();
     log::info!("fetched {} from script_env", username);
-    let (solution, task, name, mime_type) = env.lua.context(|lua_ctx| {
+    let (solution, task, feedback, name, mime_type) = env.lua.context(|lua_ctx| {
         if load {
             match lua_ctx.load(&script).exec() {
                 Ok(()) => (),
                 Err(e) => {
                     log::error!("{:?}", e);
                     return (
+                        Option::default(),
                         Option::default(),
                         Option::default(),
                         Option::default(),
@@ -485,13 +490,30 @@ pub fn evaluate_script(
                 Option::default()
             }
         };
-        (solution, task, name, mime_type)
+        let feedback: Option<String> = match guess {
+            Some(guess) => match globals.get::<_, rlua::Function>("try") {
+                Ok(f) => match f.call::<_, String>(guess) {
+                    Ok(result) => Some(result),
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        Option::default()
+                    }
+                },
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    Option::default()
+                }
+            },
+            None => Option::default(),
+        };
+        (solution, task, feedback, name, mime_type)
     });
     ScriptResult {
         solution,
         task,
         name,
         mime_type,
+        feedback,
     }
 }
 
@@ -546,10 +568,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         None => return Err(reject::custom(Error::UserIsInNoRoom)),
     };
     let room: Room = match db.get_room(&in_room).await {
-        Ok(room) => {
-            dbg!(room.id);
-            room
-        }
+        Ok(room) => room,
         Err(e) => return Err(reject::custom(e)),
     };
     let direction: &Direction = match room
@@ -557,10 +576,7 @@ pub async fn go_handler(direction_str: String, username: String, db: DB) -> WebR
         .iter()
         .find(|&neighbor| neighbor.direction == direction_str)
     {
-        Some(direction) => {
-            dbg!(&direction_str, &direction.riddle_id);
-            direction
-        }
+        Some(direction) => direction,
         None => return Err(reject::custom(Error::NeighborNotFoundError)),
     };
     let riddle_id: bson::oid::ObjectId = match user
@@ -669,14 +685,18 @@ pub async fn riddle_solve_handler(
         None => return Err(reject::custom(Error::RiddleNotFoundError)),
     };
     let script_env_present = script_env.lock().unwrap().contains_key(&username);
-    let calculated_solution = match script_env_present && riddle.script.is_some() {
+    let (calculated_solution, feedback) = match script_env_present && riddle.script.is_some() {
         true => {
-            let result: ScriptResult =
-                evaluate_script(&username, &riddle.script.unwrap(), script_env, false);
-            dbg!("{:?}", &result);
-            result.solution
+            let result: ScriptResult = evaluate_script(
+                &username,
+                &riddle.script.unwrap(),
+                Some(solution.clone()),
+                script_env,
+                false,
+            );
+            (result.solution, result.feedback)
         }
-        false => Some(riddle.solution.clone()),
+        false => (Some(riddle.solution.clone()), Option::default()),
     };
     let solved: bool = match riddle.ignore_case.unwrap_or(false) {
         true => calculated_solution.unwrap_or_default().to_lowercase() == solution.to_lowercase(),
@@ -727,10 +747,11 @@ pub async fn riddle_solve_handler(
     let reply: warp::reply::Json = warp::reply::json(&json!(&RiddleSolvedResponse {
         ok: true,
         riddle_id: riddle.id,
-        solved: solved,
+        solved,
         score: user.score,
         level: riddle.level,
         message: Option::default(),
+        feedback,
     }));
     Ok(warp::reply::with_status(reply, StatusCode::OK))
 }
@@ -763,33 +784,12 @@ pub async fn riddle_get_oid_handler(
         Some(user) => user,
         None => return Err(reject::custom(Error::UserNotAssociatedWithRiddle)),
     };
-    let mut found_files: Vec<FileResponse> = Vec::new();
-    let scripted_solution: Option<String> = match riddle.script {
-        Some(ref script) => {
-            let result: ScriptResult = evaluate_script(&username, script, script_env, true);
-            found_files.push(FileResponse {
-                ok: true,
-                message: Option::default(),
-                original_name: result.name,
-                uploaded_name: Option::default(),
-                mime_type: result.mime_type.unwrap_or_default(),
-                data: result.task.unwrap_or_default().as_bytes().to_vec(),
-                scale: Option::default(),
-                width: Option::default(),
-                height: Option::default(),
-                variants: Option::default(),
-            });
-            result.solution
-        }
-        None => Option::default(),
-    };
     let riddle_attempt = RiddleAttempt {
         riddle_id,
         t0: Some(Utc::now()),
         t_solved: Option::default(),
     };
     user.current_riddle_attempt = Some(riddle_attempt);
-    // log::debug!("{:?}", &user.current_riddle_attempt);
     match db
         .get_users_coll()
         .update_one(
@@ -811,8 +811,22 @@ pub async fn riddle_get_oid_handler(
             return Err(reject::custom(Error::MongoQueryError(e)));
         }
     }
-
-    log::info!("got riddle w/ level = {}", riddle.level);
+    let mut found_files: Vec<FileResponse> = Vec::new();
+    if let Some(ref script) = riddle.script {
+        let result: ScriptResult = evaluate_script(&username, script, None, script_env, true);
+        found_files.push(FileResponse {
+            ok: true,
+            message: Option::default(),
+            original_name: result.name,
+            uploaded_name: Option::default(),
+            mime_type: result.mime_type.unwrap_or_default(),
+            data: result.task.unwrap_or_default().as_bytes().to_vec(),
+            scale: Option::default(),
+            width: Option::default(),
+            height: Option::default(),
+            variants: Option::default(),
+        });
+    };
     if let Some(files) = riddle.files {
         for file in files.iter() {
             log::info!("trying to load file {:?}", &file);
@@ -1354,7 +1368,6 @@ fn generate_otp_qrcode(username: &String, totp_key: &Vec<u8>) -> Result<(String,
         b32_otp_secret,
         env!("CARGO_PKG_NAME"),
     );
-    dbg!(&otp_str);
     let totp_qrcode: Vec<u8> =
         match qrcode_generator::to_png_to_vec(&otp_str, QrCodeEcc::Medium, 256) {
             Ok(code) => code,
@@ -1764,6 +1777,9 @@ async fn main() -> Result<()> {
     const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
     log::info!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
     let db = DB::init().await?;
+    for collection_name in db.get_database().list_collection_names(None).await? {
+        println!("{}", collection_name);
+    }
     let script_env = Arc::new(Mutex::new(ScriptEnvMap::new()));
     let root = warp::path::end().map(|| "Labyrinth API root.");
     /* Routes accessible to all users */
