@@ -209,7 +209,7 @@ pub struct User {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct UserScoreData {
+pub struct UserFullScoreData {
     #[serde(rename = "_id")]
     pub id: ObjectId,
     pub username: String,
@@ -223,6 +223,15 @@ pub struct UserScoreData {
     pub score: u32,
     #[serde(default)]
     pub in_room: Option<ObjectId>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct UserCompactScoreData {
+    pub username: String,
+    #[serde(default)]
+    pub level: u32,
+    #[serde(default)]
+    pub score: u32,
 }
 
 impl User {
@@ -331,11 +340,11 @@ impl DB {
         }
     }
 
-    pub async fn get_all_user_scores(&self) -> Result<Vec<UserScoreData>> {
-        log::info!("get_all_user_scores()");
-        let cursor: mongodb::Cursor<UserScoreData> = match self
+    pub async fn get_full_user_scores(&self) -> Result<Vec<UserFullScoreData>> {
+        log::info!("get_full_user_scores()");
+        let cursor: mongodb::Cursor<UserFullScoreData> = match self
             .get_database()
-            .collection::<UserScoreData>(&self.coll_users)
+            .collection::<UserFullScoreData>(&self.coll_users)
             .find(
                 doc! { "activated": true },
                 FindOptions::builder()
@@ -349,6 +358,39 @@ impl DB {
                     })
                     .sort(doc! {
                         "score": 1u32,
+                    })
+                    .build(),
+            )
+            .await
+        {
+            Ok(cursor) => cursor,
+            Err(e) => return Err(MongoQueryError(e)),
+        };
+        let users = match cursor.try_collect().await {
+            Ok(users) => users,
+            Err(e) => return Err(MongoError(e)),
+        };
+        Ok(users)
+    }
+
+    pub async fn get_compact_user_scores(
+        &self,
+        _game_id: &bson::oid::ObjectId, // TODO
+    ) -> Result<Vec<UserCompactScoreData>> {
+        log::info!("get_compact_user_scores()");
+        let cursor: mongodb::Cursor<UserCompactScoreData> = match self
+            .get_database()
+            .collection::<UserCompactScoreData>(&self.coll_users)
+            .find(
+                doc! { "activated": true },
+                FindOptions::builder()
+                    .projection(doc! {
+                        "username": 1u32,
+                        "level": 1u32,
+                        "score": 1u32,
+                    })
+                    .sort(doc! {
+                        "score": -1i32,
                     })
                     .build(),
             )

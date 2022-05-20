@@ -17,7 +17,7 @@ const CMDNAMES = {
     ACTIVATE: 'activate',
     ABOUT: 'about',
     TOS: 'tos',
-    HIGHSCORE: 'highscore',
+    HIGHSCORES: 'highscores',
     REGISTER: 'register',
     PASSWD: 'passwd',
     PROMOTE: 'promote',
@@ -638,12 +638,22 @@ const COMMANDS = [
         },
     },
     {
-        name: CMDNAMES.HIGHSCORE,
+        name: CMDNAMES.HIGHSCORES,
         roles: [ROLE.USER, ROLE.ADMIN, ROLE.DESIGNER],
         description: tr('Highscores anzeigen'),
         fn: async function() {
-            this.print('NOCH NICHT IMPLEMENTIERT');
-            return Promise.resolve();
+            const reply = await authenticatedRequest(constructURL(Game.URL.GAME.HIGHSCORES, {gameid: this.user.in_room.game_id.$oid}), 'GET')
+            .then(response => response.json());
+            if (reply.ok) {
+                this.print(`<strong>                Name      Score</strong>`);
+                this.print(`-------------------------------`);
+                for (const user of reply.highscores) {
+                    this.print(`${user.username.substring(0, 20).padStart(20, ' ')} ${user.absScore.toString().padStart(10, ' ')}`);
+                }
+                return Promise.resolve();
+            }
+            this.print(tr(`Fehler: ${reply.message}`));
+            return Promise.reject();
         },
     },
     {

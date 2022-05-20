@@ -7,7 +7,10 @@ use auth::{with_auth, Role};
 use base32;
 use bson::oid::ObjectId;
 use chrono::{serde::ts_seconds_option, DateTime, Utc};
-use db::{with_db, Direction, PinType, Riddle, RiddleAttempt, Room, SecondFactor, User, DB};
+use db::{
+    with_db, Direction, PinType, Riddle, RiddleAttempt, Room, SecondFactor, User,
+    UserCompactScoreData, DB,
+};
 use dotenv::dotenv;
 use lazy_static::lazy_static;
 use lettre::{Message, SmtpTransport, Transport};
@@ -396,6 +399,22 @@ struct PromoteUserResponse {
     pub message: Option<String>,
     pub username: String,
     pub role: Role,
+}
+
+#[derive(Serialize, Debug)]
+struct UserScoreResponse {
+    pub username: String,
+    #[serde(rename = "absScore")]
+    pub abs_score: u32,
+    #[serde(rename = "relScore")]
+    pub rel_score: f32,
+}
+
+#[derive(Serialize, Debug)]
+struct HighscoresResponse {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub highscores: Vec<UserScoreResponse>,
 }
 
 #[derive(Debug)]
@@ -1143,6 +1162,40 @@ pub async fn cheat_handler(username: String) -> WebResult<impl Reply> {
     Ok(StatusCode::PAYMENT_REQUIRED)
 }
 
+pub async fn highscores_handler(
+    game_id_str: String,
+    username: String,
+    db: DB,
+) -> WebResult<impl Reply> {
+    log::info!(
+        "highscores_handler(); game_id = {}, username = {}",
+        &game_id_str,
+        &username
+    );
+    let game_id: bson::oid::ObjectId = match ObjectId::parse_str(game_id_str) {
+        Ok(oid) => oid,
+        Err(e) => return Err(reject::custom(Error::BsonOidError(e))),
+    };
+    let scores: Vec<UserCompactScoreData> = match db.get_compact_user_scores(&game_id).await {
+        Ok(scores) => scores,
+        Err(e) => return Err(reject::custom(Error::DatabaseQueryError(e.to_string()))),
+    };
+    let highscores: Vec<UserScoreResponse> = scores
+        .iter()
+        .map(|s| UserScoreResponse {
+            username: s.username.clone(),
+            abs_score: s.score,
+            rel_score: 0.0,
+        })
+        .collect();
+    let reply: warp::reply::Json = warp::reply::json(&json!(&HighscoresResponse {
+        ok: true,
+        message: Option::default(),
+        highscores
+    }));
+    Ok(warp::reply::with_status(reply, StatusCode::OK))
+}
+
 pub async fn user_whoami_handler(username: String, db: DB) -> WebResult<impl Reply> {
     log::info!("user_whoami_handler() {}", &username);
     let user: User = match db.get_user(&username).await {
@@ -1888,6 +1941,11 @@ async fn main() -> Result<()> {
         .and(with_auth(Role::User))
         .and(with_db(db.clone()))
         .and_then(go_handler);
+    let highscores_route = warp::path!("game" / "highscores" / OidString)
+        .and(warp::get())
+        .and(with_auth(Role::User))
+        .and(with_db(db.clone()))
+        .and_then(highscores_handler);
     let game_stats_route = warp::path!("game" / "stats" / OidString)
         .and(warp::get())
         .and(with_auth(Role::User))
@@ -1932,6 +1990,7 @@ async fn main() -> Result<()> {
         .or(webauthn_login_finish_route)
         .or(ping_route)
         .or(cheat_route)
+        .or(highscores_route)
         .or(game_stats_route)
         .or(warp::any().and(warp::options()).map(warp::reply))
         .recover(error::handle_rejection);

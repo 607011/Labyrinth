@@ -29,6 +29,7 @@ class Game extends HTMLElement {
         GO: `${HOST}/go/:direction`,
         GAME: {
             STATS: `${HOST}/game/stats/:gameid`,
+            HIGHSCORES: `${HOST}/game/highscores/:gameid`,
         },
         PING: `${HOST}/ping`,
         CHEAT: `${HOST}/cheat`,
