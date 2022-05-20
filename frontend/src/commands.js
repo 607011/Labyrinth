@@ -652,22 +652,29 @@ const COMMANDS = [
         description: tr('Passwort ändern'),
         args: [
             {
-                name: 'password',
-                type: 'optional_password',
+                name: 'username',
+                type: 'optional_string',
             },
         ],
         fn: async function(params) {
-            let [password] = params;
-            while (typeof password === 'undefined') {
-                password = await this.getPassword();
-            }
-            const reply = await authenticatedRequest(Game.URL.USER.PASSWD, 'POST', {password}).then(response => response.json());
-            if (reply.ok) {
-                this.print(tr('Passwort geändert.'));
-            }
-            else {
-                this.print(tr(`Ändern des Passworts fehlgeschlagen: ${reply.message}.`));
+            let [username] = params;
+            if (username !== this.user.username && this.user.role !== ROLE.ADMIN) {;
+                this.print(tr('Nur Admins dürfen Passwörter anderer User ändern.'));
                 return Promise.reject();
+            }
+            if (typeof username === 'undefined') {
+                username = this.user.username;
+            }
+            let password = await this.getPassword();
+            if (password) {
+                const reply = await authenticatedRequest(Game.URL.USER.PASSWD, 'POST', {username, password}).then(response => response.json());
+                if (reply.ok) {
+                    this.print(tr('Passwort geändert.'));
+                }
+                else {
+                    this.print(tr(`Ändern des Passworts fehlgeschlagen: ${reply.message}.`));
+                    return Promise.reject();
+                }
             }
             return Promise.resolve();
         },

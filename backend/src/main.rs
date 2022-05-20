@@ -143,6 +143,7 @@ pub struct UserRegistrationRequest {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UserPasswordChangeRequest {
+    pub username: Option<String>,
     pub password: String,
 }
 
@@ -1512,6 +1513,10 @@ pub async fn user_password_change_handler(
     mut db: DB,
 ) -> WebResult<impl Reply> {
     let password: String = body.password;
+    let username: String = match body.username.clone() {
+        Some(username) => username,
+        None => username,
+    };
     body.password = "******".to_string();
     log::info!("user_password_change_handler(); body = {:?}", &body);
     if password.len() < 8 {
@@ -1523,6 +1528,13 @@ pub async fn user_password_change_handler(
     };
     if password_is_bad {
         return Err(reject::custom(Error::UnsafePasswordError));
+    }
+    let role = match db.get_user_role(&username).await {
+        Ok(role) => role,
+        Err(e) => return Err(reject::custom(Error::DatabaseQueryError(e.to_string()))),
+    };
+    if username != body.username.unwrap_or_default() && role != Role::Admin {
+        return Err(reject::custom(Error::UserIsNoAdminError));
     }
     match db.set_user_password(&username, &password).await {
         Ok(()) => (),
@@ -1776,10 +1788,12 @@ async fn main() -> Result<()> {
     const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
     const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
     log::info!("{} {}", CARGO_PKG_NAME, CARGO_PKG_VERSION);
+    log::info!("Trying to connect to database ...");
     let db = DB::init().await?;
-    for collection_name in db.get_database().list_collection_names(None).await? {
-        println!("{}", collection_name);
-    }
+    db.get_database()
+        .run_command(doc! {"ping": 1}, None)
+        .await?;
+    log::info!("Connected successfully.");
     let script_env = Arc::new(Mutex::new(ScriptEnvMap::new()));
     let root = warp::path::end().map(|| "Labyrinth API root.");
     /* Routes accessible to all users */

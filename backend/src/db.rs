@@ -991,7 +991,7 @@ impl DB {
             Ok(hash) => hash,
             Err(e) => return Err(e),
         };
-        match self
+        let result: UpdateResult = match self
             .get_users_coll()
             .update_one(
                 doc! { "username": username, "activated": true },
@@ -1004,15 +1004,17 @@ impl DB {
             )
             .await
         {
-            Ok(_) => {
-                log::info!("Updated {}.", username);
-                Ok(())
-            }
+            Ok(result) => result,
             Err(e) => {
                 log::error!("Error: update failed ({:?})", &e);
-                Err(MongoQueryError(e))
+                return Err(MongoQueryError(e));
             }
+        };
+        if result.matched_count != 1 || result.modified_count != 1 {
+            return Err(UserNotFoundError);
         }
+        log::info!("Password of user {} updated.", username);
+        Ok(())
     }
 
     pub async fn activate_user(&mut self, user: &mut User) -> Result<()> {

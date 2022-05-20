@@ -50,6 +50,8 @@ pub enum Error {
     SmtpTransportError,
     #[error("user update failed")]
     UserUpdateError,
+    #[error("user is no admin")]
+    UserIsNoAdminError,
     #[error("riddle not found")]
     RiddleNotFoundError,
     #[error("room not found")]
