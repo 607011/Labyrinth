@@ -644,11 +644,11 @@ const COMMANDS = [
         fn: async function() {
             const reply = await authenticatedRequest(constructURL(Game.URL.GAME.HIGHSCORES, {gameid: this.user.in_room.game_id.$oid}), 'GET')
             .then(response => response.json());
-            if (reply.ok) {
-                this.print(`<strong>                Name      Score</strong>`);
-                this.print(`-------------------------------`);
+            if (reply.ok && reply.highscores instanceof Array) {
+                this.print(tr(`<b>Name                                Score</b>`));
+                this.print(`-----------------------------------------`);
                 for (const user of reply.highscores) {
-                    this.print(`${user.username.substring(0, 20).padStart(20, ' ')} ${user.absScore.toString().padStart(10, ' ')}`);
+                    this.print(`${user.username.substring(0, 30).padEnd(30)} ${user.absScore.toString().padStart(10, ' ')}`);
                 }
                 return Promise.resolve();
             }
