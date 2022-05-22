@@ -1,4 +1,3 @@
-const VERSION = '0.0.13';
 const HOST = (function(window) {
     switch (window.location.hostname) {
         case 'labyrinth.raetselonkel.de': return 'https://labyrinth.raetselonkel.de/v1/api';
