@@ -17,6 +17,7 @@ const CMDNAMES = {
     ACTIVATE: 'activate',
     ABOUT: 'about',
     TOS: 'tos',
+    GPG: 'gpg',
     HIGHSCORES: 'highscores',
     REGISTER: 'register',
     PASSWD: 'passwd',
@@ -622,7 +623,7 @@ const COMMANDS = [
         roles: [ROLE.ANON, ROLE.USER, ROLE.ADMIN, ROLE.DESIGNER],
         description: tr('Infos über diese Software anzeigen'),
         fn: async function() {
-            const about = await fetch(`${window.location.href}/data/about-${this.locale}.md`).then(response => response.text(), {cache: 'no-store'});
+            const about = await fetch(`${window.location.href}data/about-${this.locale}.md`).then(response => response.text(), {cache: 'no-store'});
             this.print(parseMarkdown(about));
             return Promise.resolve();
         },
@@ -632,8 +633,19 @@ const COMMANDS = [
         roles: [ROLE.ANON, ROLE.USER, ROLE.ADMIN, ROLE.DESIGNER],
         description: tr('Nutzungsbedingungen anzeigen'),
         fn: async function() {
-            const tos = await fetch(`${window.location.href}/data/tos-${this.locale}.md`).then(response => response.text(), {cache: 'no-store'});
+            const tos = await fetch(`${window.location.href}data/tos-${this.locale}.md`).then(response => response.text(), {cache: 'no-store'});
             this.print(parseMarkdown(tos));
+            return Promise.resolve();
+        },
+    },
+    {
+        name: CMDNAMES.GPG,
+        roles: [ROLE.USER, ROLE.ADMIN, ROLE.DESIGNER],
+        description: tr('Öffentlichen GnuPG-Schlüssel des Rätselonkels anzeigen'),
+        fn: async function() {
+            const key = await fetch(`${window.location.href}data/onkelraetsel.asc`).then(response => response.text(), {cache: 'no-store'});
+            this.print(tr('\nEs folgt der öffentliche GnuPG-Schlüssel des Rätselonkels:\n\n'))
+            this.print(key);
             return Promise.resolve();
         },
     },
