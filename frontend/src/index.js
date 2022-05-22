@@ -458,7 +458,7 @@ terminal-div {
                             // fall-through
                         case 'video/ogg':
                             const videoUrl = `${UPLOAD_FOLDER}/${f.uploadedName}`;
-                            this.print(`<video autoplay controls><source src="${videoUrl}" type="${f.mimeType}"></video>`);
+                            this.print(`<video width="512" autoplay controls><source src="${videoUrl}" type="${f.mimeType}"></video>`);
                             break;
                         default:
                             console.error(`Unknown file type: ${f.mimeType}`);
