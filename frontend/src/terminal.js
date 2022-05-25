@@ -227,9 +227,11 @@ strong, .b700 {
         this.write(this.prompt);
     }
     enter(text) {
-        this.currentTextarea.value = text;
-        this.currentTextarea.dispatchEvent(new Event('input'));
-        this.currentTextarea.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+        if (this.currentTextarea) {
+            this.currentTextarea.value = text;
+            this.currentTextarea.dispatchEvent(new Event('input'));
+            this.currentTextarea.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));    
+        }
     }
     /**
      * @param {{}} param
