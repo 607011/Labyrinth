@@ -6,7 +6,7 @@ use crate::error::Error;
 use auth::{with_auth, Role};
 use base32;
 use bson::oid::ObjectId;
-use chrono::{serde::ts_seconds_option, DateTime, Utc};
+use chrono::{serde::ts_seconds_option, DateTime, TimeZone, Utc};
 use db::{
     with_db, Direction, PinType, Riddle, RiddleAttempt, Room, SecondFactor, User,
     UserCompactScoreData, DB,
@@ -735,10 +735,13 @@ pub async fn riddle_solve_handler(
         if riddle_attempt.t0.is_none() {
             return Err(reject::custom(Error::RiddleHasNotBeenSeenByUser));
         }
+        let t0 = riddle_attempt
+            .t0
+            .unwrap_or(Utc.ymd(1970, 1, 1).and_hms(0, 0, 0));
         solutions.push(RiddleAttempt {
             riddle_id: riddle.id,
             t0: riddle_attempt.t0,
-            t_solved: Some(Utc::now()),
+            dt: Some(Utc::now().signed_duration_since(t0).num_seconds()),
         });
         user.level = riddle.level.max(user.level);
         user.score += riddle.difficulty;
@@ -807,7 +810,7 @@ pub async fn riddle_get_oid_handler(
     let riddle_attempt = RiddleAttempt {
         riddle_id,
         t0: Some(Utc::now()),
-        t_solved: Option::default(),
+        dt: Option::default(),
     };
     user.current_riddle_attempt = Some(riddle_attempt);
     match db

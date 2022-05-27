@@ -164,8 +164,7 @@ pub struct RiddleAttempt {
     #[serde(with = "ts_seconds_option")]
     pub t0: Option<DateTime<Utc>>,
     #[serde(default)]
-    #[serde(with = "ts_seconds_option")]
-    pub t_solved: Option<DateTime<Utc>>,
+    pub dt: Option<i64>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

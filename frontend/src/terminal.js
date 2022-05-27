@@ -159,7 +159,7 @@ strong, .b700 {
         return this._prompt;
     }
     /**
-     * @param {String[]} prompt
+     * @param {String} prompt
      */
     set prompt(prompt) {
         this._prompt = prompt;
