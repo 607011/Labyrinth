@@ -657,10 +657,11 @@ const COMMANDS = [
             const reply = await authenticatedRequest(constructURL(Game.URL.GAME.HIGHSCORES, {gameid: this.user.in_room.game_id.$oid}), 'GET')
             .then(response => response.json());
             if (reply.ok && reply.highscores instanceof Array) {
-                this.print(tr(`<b>Name                                Score</b>`));
-                this.print(`-----------------------------------------`);
+                this.print(tr(`<b>Name                                Score       1k/t</b>`));
+                this.print(`----------------------------------------------------`);
+                reply.highscores.sort((a, b) => a.relScore < b.relScore ? -1 : a.relScore > b.relScore ? 1 : 0);
                 for (const user of reply.highscores) {
-                    this.print(`${user.username.substring(0, 30).padEnd(30)} ${user.absScore.toString().padStart(10, ' ')}`);
+                    this.print(`${user.username.substring(0, 30).padEnd(30)} ${user.absScore.toString().padStart(10, ' ')} ${user.relScore.toFixed(2).padStart(10, ' ')}`);
                 }
                 return Promise.resolve();
             }

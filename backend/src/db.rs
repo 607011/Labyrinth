@@ -231,6 +231,8 @@ pub struct UserCompactScoreData {
     pub level: u32,
     #[serde(default)]
     pub score: u32,
+    #[serde(default)]
+    pub total_time: u32,
 }
 
 impl User {
@@ -377,31 +379,74 @@ impl DB {
         _game_id: &bson::oid::ObjectId, // TODO
     ) -> Result<Vec<UserCompactScoreData>> {
         log::info!("get_compact_user_scores()");
-        let cursor: mongodb::Cursor<UserCompactScoreData> = match self
+        let cursor = match self
             .get_database()
-            .collection::<UserCompactScoreData>(&self.coll_users)
-            .find(
-                doc! { "activated": true },
-                FindOptions::builder()
-                    .projection(doc! {
-                        "username": 1u32,
-                        "level": 1u32,
-                        "score": 1u32,
-                    })
-                    .sort(doc! {
-                        "score": -1i32,
-                    })
-                    .build(),
+            .collection::<bson::Document>(&self.coll_users)
+            .aggregate(
+                vec![
+                    doc! { "$match": doc! {"activated": true }},
+                    doc! { "$unwind": "$solved"},
+                    doc! { "$group": doc! {
+                        "_id": "$_id",
+                        "username": doc! { "$first": "$username"},
+                        "score": doc! { "$first": "$score"},
+                        "level": doc! { "$first": "$level"},
+                        "total_time": doc! { "$sum": "$solved.dt" },
+                    }},
+                ],
+                None,
             )
             .await
         {
             Ok(cursor) => cursor,
-            Err(e) => return Err(MongoQueryError(e)),
+            Err(e) => return Err(DatabaseQueryError(e.to_string())),
         };
-        let users = match cursor.try_collect().await {
-            Ok(users) => users,
-            Err(e) => return Err(MongoError(e)),
-        };
+        let users: Vec<UserCompactScoreData> = cursor
+            .map(|result| {
+                let result = match result {
+                    Ok(result) => result,
+                    Err(e) => {
+                        log::error!("{}", e);
+                        doc! {}
+                    }
+                };
+                let username = match result.get("username") {
+                    Some(doc) => doc.as_str().unwrap().to_string(),
+                    None => {
+                        log::error!("error unwrapping username");
+                        String::new()
+                    }
+                };
+                let level: u32 = match result.get("level") {
+                    Some(doc) => doc.as_i32().unwrap_or(0) as u32,
+                    None => {
+                        log::error!("error unwrapping level");
+                        0
+                    }
+                };
+                let score: u32 = match result.get("score") {
+                    Some(doc) => doc.as_i32().unwrap_or(0) as u32,
+                    None => {
+                        log::error!("error unwrapping score");
+                        0
+                    }
+                };
+                let total_time: u32 = match result.get("total_time") {
+                    Some(doc) => doc.as_i32().unwrap_or(0) as u32,
+                    None => {
+                        log::error!("error unwrapping total_time");
+                        0
+                    }
+                };
+                UserCompactScoreData {
+                    username,
+                    level,
+                    score,
+                    total_time,
+                }
+            })
+            .collect::<Vec<UserCompactScoreData>>()
+            .await;
         Ok(users)
     }
 

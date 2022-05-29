@@ -1185,10 +1185,16 @@ pub async fn highscores_handler(
     };
     let highscores: Vec<UserScoreResponse> = scores
         .iter()
-        .map(|s| UserScoreResponse {
-            username: s.username.clone(),
-            abs_score: s.score,
-            rel_score: 0.0,
+        .map(|s| {
+            let rel_score: f32 = match s.total_time {
+                0 => 0.0,
+                _ => 1e3 * (s.score as f32 / s.total_time as f32),
+            };
+            UserScoreResponse {
+                username: s.username.clone(),
+                abs_score: s.score,
+                rel_score,
+            }
         })
         .collect();
     let reply: warp::reply::Json = warp::reply::json(&json!(&HighscoresResponse {
