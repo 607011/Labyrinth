@@ -24,7 +24,7 @@ Sämtliche Inhalte des Dienstes, beispielhaft und nicht abschließend Texte, Dat
 
 ## Community
 
-Wir begrüßen es, wenn Sie sich mit konstruktiver Kritik an der Weiterentwicklung des Spiels beteiligen. Um Fehler zu melden, benutzen Sie bitte das Ticketmanagementsystem der Entwicklungsplattform GitHub. Es gibt [eines für das Backend](https://github.com/raetselonkel/Labyrinth/issues) (der Server, der den Dienst bereitstellt) und [eines für das Frontend](https://github.com/raetselonkel/Labyrinth-Frontend/issues) (das, was Sie im Browser sehen, wenn Sie die [Spiel-Website](https://labyrinth.raetselonkel.de) aufgerufen haben). Wenn Sie Vorschläge für neue Rätsel haben, wenden Sie sich bitte per [Mail an den Anbieter](mailto:riddle-proposals@ersatzworld.net). 
+Wir begrüßen es, wenn Sie sich mit konstruktiver Kritik an der Weiterentwicklung des Spiels beteiligen. Um Fehler zu melden, benutzen Sie bitte das [Ticketmanagementsystem](https://github.com/raetselonkel/Labyrinth/issues) der Entwicklungsplattform GitHub. Wenn Sie Vorschläge für neue Rätsel haben, wenden Sie sich bitte per [Mail an den Anbieter](mailto:riddle-proposals@ersatzworld.net). 
 
 ## Verhaltenskodex
 
