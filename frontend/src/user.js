@@ -4,7 +4,6 @@ class User {
         this.update(userData);
     }
     update(userData) {
-        console.debug(`User.update(${JSON.stringify(userData)}`);
         for (const [key, value] of Object.entries(userData)) {
             this[key] = value;
         }
