@@ -228,11 +228,11 @@ pub struct UserFullScoreData {
 pub struct UserCompactScoreData {
     pub username: String,
     #[serde(default)]
-    pub level: u32,
+    pub level: i64,
     #[serde(default)]
-    pub score: u32,
+    pub score: i64,
     #[serde(default)]
-    pub total_time: u32,
+    pub total_time: i64,
 }
 
 impl User {
@@ -389,9 +389,9 @@ impl DB {
                     doc! { "$group": doc! {
                         "_id": "$_id",
                         "username": doc! { "$first": "$username"},
-                        "score": doc! { "$first": "$score"},
-                        "level": doc! { "$first": "$level"},
-                        "total_time": doc! { "$sum": "$solved.dt" },
+                        "score": doc! { "$first": doc! { "$convert": doc! { "input": "$score", "to": "long" }}},
+                        "level": doc! { "$first": doc! { "$convert": doc! { "input": "$level", "to": "long" }}},
+                        "total_time": doc! { "$sum": doc! { "$convert": doc! { "input": "$solved.dt", "to": "long" }}},
                     }},
                 ],
                 None,
@@ -417,22 +417,22 @@ impl DB {
                         String::new()
                     }
                 };
-                let level: u32 = match result.get("level") {
-                    Some(doc) => doc.as_i32().unwrap_or(0) as u32,
+                let level: i64 = match result.get("level") {
+                    Some(doc) => doc.as_i64().unwrap_or(0),
                     None => {
                         log::error!("error unwrapping level");
                         0
                     }
                 };
-                let score: u32 = match result.get("score") {
-                    Some(doc) => doc.as_i32().unwrap_or(0) as u32,
+                let score: i64 = match result.get("score") {
+                    Some(doc) => doc.as_i64().unwrap_or(0),
                     None => {
                         log::error!("error unwrapping score");
                         0
                     }
                 };
-                let total_time: u32 = match result.get("total_time") {
-                    Some(doc) => doc.as_i32().unwrap_or(0) as u32,
+                let total_time: i64 = match result.get("total_time") {
+                    Some(doc) => doc.as_i64().unwrap_or(0),
                     None => {
                         log::error!("error unwrapping total_time");
                         0

@@ -405,7 +405,7 @@ struct PromoteUserResponse {
 struct UserScoreResponse {
     pub username: String,
     #[serde(rename = "absScore")]
-    pub abs_score: u32,
+    pub abs_score: i64,
     #[serde(rename = "relScore")]
     pub rel_score: f32,
 }
