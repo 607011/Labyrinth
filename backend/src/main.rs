@@ -1188,7 +1188,7 @@ pub async fn highscores_handler(
         .map(|s| {
             let rel_score: f32 = match s.total_time {
                 0 => 0.0,
-                _ => 1e3 * (s.score as f32 / s.total_time as f32),
+                _ => 3.6e3 * (s.score as f32 / s.total_time as f32),
             };
             UserScoreResponse {
                 username: s.username.clone(),
