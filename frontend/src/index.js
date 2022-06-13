@@ -212,14 +212,14 @@ terminal-div {
         this.print(tr('Drücke Strg+C, um die Ausführung eines Kommandos abzubrechen.'));
         this.displayPrompt();
         let callback = response => {
-            let tokenized = Game.parseCommandLine(response);
+            const tokenized = this.parseCommandLine(response);
             if (tokenized === null) {
                 this.displayPrompt();
                 this.term.waitForCommand(callback);
                 return;
             }
             if (typeof tokenized.command === 'undefined') {
-                const c = Game.COMMANDS.map(cmd => {
+                const c = Game.COMMANDS.filter(cmd => cmd.roles.includes(this.effectiveRole)).map(cmd => {
                     return {
                         distance: levenshtein(cmd.name, tokenized.given_command),
                         name: cmd.name,
@@ -264,12 +264,12 @@ terminal-div {
      * @param {String} commandLine
      * @returns {object} object consisting of command, params and the given command
      */
-    static parseCommandLine(commandLine) {
+    parseCommandLine(commandLine) {
         let m = commandLine.match(RE.COMMANDLINE);
         if (m === null || m.length === 0) {
             return null;
         }
-        const command = Game.COMMANDS.find(a => a.name === m[0]);
+        const command = Game.COMMANDS.filter(cmd => cmd.roles.includes(this.effectiveRole)).find(a => a.name === m[0]);
         return {
             command: command,
             params: m.slice(1),
@@ -321,9 +321,12 @@ terminal-div {
             : null;
         return parsedJWT && parsedJWT.exp > currentUnixTimestamp();
     }
+    get effectiveRole() {
+        return this.user && this.user.role ? this.user.role : null;
+    }
     async execute(command) {
         this.showProgressbar();
-        await Game.COMMANDS.find(cmd => cmd.name === command).fn.bind(this)();
+        await Game.COMMANDS.filter(cmd => cmd.roles.includes(this.effectiveRole)).find(cmd => cmd.name === command).fn.bind(this)();
     }
     /**
      * Go through door.
