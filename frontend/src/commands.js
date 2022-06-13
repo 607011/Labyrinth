@@ -750,7 +750,7 @@ const COMMANDS = [
                 email = await this.getInput(tr('Mailadresse: '), { match: RE.EMAIL });
             }
             while (typeof password === 'undefined') {
-                password = Game.getPassword();
+                password = await this.getPassword();
             }
             let data = {
                 username: username,
