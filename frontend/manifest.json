@@ -4,6 +4,13 @@
   "description": "Finde heraus durch Lösen von Rätseln",
   "icons": [
     {
+      "src": "icon.appiconset/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "16x16 32x32 44x44 192x192 256x256 512x512",
+      "scale": "1x",
+      "purpose": "any"
+    },
+    {
       "src": "icon.appiconset/icon_16.png",
       "type": "image/png",
       "sizes": "16x16",
