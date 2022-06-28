@@ -30,7 +30,7 @@ const makeDownloadLink = (file) => {
     span.textContent = '-> ';
     let a = document.createElement('a');
     a.download = file.originalName;
-    a.title = `Download image as ${file.originalName}`;
+    a.title = `Bild herunterladen als ${file.originalName}`;
     a.href = `${UPLOAD_FOLDER}/${file.uploadedName}`;
     a.textContent = `Download ${file.originalName}`;
     span.appendChild(a);
@@ -44,19 +44,19 @@ const makeDownloadLink = (file) => {
  */
  const makeDownloadLinkMime = (text, filename, mimetype) => {
     let span = document.createElement('div');
-    span.textContent = '-> ';
+    span.textContent = `-> `;
     let a = document.createElement('a');
     a.download = filename;
-    a.title = 'Download task as file';
+    a.title = 'Aufgabe als Datei herunterladen';
     a.href = `data:${mimetype};base64,${Base64.encode(text)}`;
-    a.textContent = `Download task as file '${filename}'`;
+    a.textContent = `Aufgabe als Datei '${filename}' herunterladen`;
     span.appendChild(a);
     return span;
 };
 
 class Base64 {
     static encode(string) {
-        const codeUnits = new Uint16Array(string.length);
+        const codeUnits = new Uint8Array(string.length);
         for (let i = 0; i < codeUnits.length; i++) {
           codeUnits[i] = string.charCodeAt(i);
         }
